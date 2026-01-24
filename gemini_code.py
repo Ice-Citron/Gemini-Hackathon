@@ -345,62 +345,71 @@ def stop_interrupt_listener():
 
 
 def show_diff(old_content: str, new_content: str, filename: str):
-    """Show side-by-side diff with color highlighting"""
+    """Show side-by-side diff with color highlighting - FULL content"""
     from rich.table import Table
     from rich.syntax import Syntax
+    from rich.panel import Panel
 
     if old_content == new_content:
         console.print("[dim]No changes[/]")
         return
 
-    # Create side-by-side table
-    table = Table(title=f"📝 Changes to {filename}", show_lines=True, expand=True)
-    table.add_column("Before (Original)", style="red", width=50)
-    table.add_column("After (Patched)", style="green", width=50)
+    # Determine language
+    ext = filename.split('.')[-1] if '.' in filename else 'python'
+    lang = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'rb': 'ruby', 'php': 'php'}.get(ext, ext)
 
-    # Truncate for display
-    old_display = old_content[:2000] if len(old_content) > 2000 else old_content
-    new_display = new_content[:2000] if len(new_content) > 2000 else new_content
-
-    # Add syntax highlighted code
+    # Show BEFORE panel
+    console.print(f"\n[bold bright_red]BEFORE (Original): {filename}[/]")
     try:
-        ext = filename.split('.')[-1] if '.' in filename else 'python'
-        lang = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'rb': 'ruby', 'php': 'php'}.get(ext, ext)
-        old_syntax = Syntax(old_display, lang, line_numbers=True, word_wrap=True)
-        new_syntax = Syntax(new_display, lang, line_numbers=True, word_wrap=True)
-        table.add_row(old_syntax, new_syntax)
+        old_syntax = Syntax(old_content, lang, line_numbers=True, word_wrap=True, theme="monokai")
+        console.print(Panel(old_syntax, border_style="red"))
     except:
-        table.add_row(old_display, new_display)
+        console.print(Panel(old_content, border_style="red"))
 
-    console.print(table)
+    # Show AFTER panel
+    console.print(f"\n[bold bright_green]AFTER (Patched): {filename}[/]")
+    try:
+        new_syntax = Syntax(new_content, lang, line_numbers=True, word_wrap=True, theme="monokai")
+        console.print(Panel(new_syntax, border_style="green"))
+    except:
+        console.print(Panel(new_content, border_style="green"))
 
-    # Also show unified diff below for detailed changes
+    # Show unified diff for quick reference
     old_lines = old_content.splitlines()
     new_lines = new_content.splitlines()
     diff = list(difflib.unified_diff(old_lines, new_lines, lineterm=''))
 
     if diff:
-        console.print("\n[bold]Line-by-line changes:[/]")
-        for line in diff[2:30]:  # Skip headers, limit output
+        console.print("\n[bold]Summary of changes:[/]")
+        for line in diff[2:]:  # Skip headers, show ALL changes
             if line.startswith('+'):
                 console.print(f"[bright_green]{line}[/]")
             elif line.startswith('-'):
                 console.print(f"[bright_red]{line}[/]")
             elif line.startswith('@@'):
                 console.print(f"[yellow]{line}[/]")
-        if len(diff) > 32:
-            console.print(f"[dim]  ... +{len(diff) - 32} more lines[/]")
     console.print()
 
 
 def show_new_file_preview(content: str, filename: str):
-    """Show new file with green highlighting"""
-    console.print(f"\n[bold]New file: {filename}[/]")
-    lines = content.splitlines()
-    for i, line in enumerate(lines[:25], 1):
-        console.print(f"[bright_green]+{i:3}| {line}[/]")
-    if len(lines) > 25:
-        console.print(f"[dim]  ... +{len(lines) - 25} more lines[/]")
+    """Show new file with green highlighting - FULL content"""
+    from rich.syntax import Syntax
+    from rich.panel import Panel
+
+    console.print(f"\n[bold bright_green]New file: {filename}[/]")
+
+    # Determine language for syntax highlighting
+    ext = filename.split('.')[-1] if '.' in filename else 'python'
+    lang = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'rb': 'ruby', 'php': 'php'}.get(ext, ext)
+
+    try:
+        syntax = Syntax(content, lang, line_numbers=True, word_wrap=True, theme="monokai")
+        console.print(Panel(syntax, title=f"[green]+ {filename}[/]", border_style="green"))
+    except:
+        # Fallback to plain text
+        lines = content.splitlines()
+        for i, line in enumerate(lines, 1):
+            console.print(f"[bright_green]+{i:3}| {line}[/]")
     console.print()
 
 
@@ -855,7 +864,7 @@ VULNERABILITY REPORT: app.py
   Proof: curl -X POST ".../login" -d "username=admin' OR '1'='1"
 
 BEFORE (vulnerable):
-  query = f"SELECT * FROM users WHERE name='{username}'"
+  query = f"SELECT * FROM users WHERE name='{{username}}'"
   cursor.execute(query)
 
 AFTER (secure):
@@ -866,11 +875,7 @@ Hacker's Note:
   bypassing authentication and returning all users.
 
 BAD (markdown - don't use):
-  ## Vulnerabilities
-  **SQL Injection** in `/login`
-  ```python
-  query = f"SELECT..."
-  ```
+  Use ## headings, **bold**, or triple backticks
 
 EDUCATIONAL MODE - "Hacker's Note":
 After each exploit, explain in plain text:
