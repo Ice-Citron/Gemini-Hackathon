@@ -97,6 +97,9 @@ LOG_FILE = None  # Combined log file for tool calls, API calls, and conversation
 CURRENT_TASKS = []  # List of current tasks Gemini is working on
 CURRENT_TASK_STATUS = "idle"  # idle, thinking, executing, done
 
+# Backup system for /undo
+FILE_BACKUPS = {}  # {filepath: original_content} - for rollback
+
 # Tool definitions for function calling
 TOOLS = [
     {
@@ -342,28 +345,51 @@ def stop_interrupt_listener():
 
 
 def show_diff(old_content: str, new_content: str, filename: str):
-    """Show diff with color highlighting - red for removed, cyan for added"""
-    old_lines = old_content.splitlines(keepends=True)
-    new_lines = new_content.splitlines(keepends=True)
-    diff = list(difflib.unified_diff(old_lines, new_lines, fromfile=f"a/{filename}", tofile=f"b/{filename}"))
+    """Show side-by-side diff with color highlighting"""
+    from rich.table import Table
+    from rich.syntax import Syntax
 
-    if not diff:
+    if old_content == new_content:
         console.print("[dim]No changes[/]")
         return
 
-    console.print(f"\n[bold]Diff for {filename}:[/]")
-    for line in diff[:50]:  # Limit output
-        line = line.rstrip()
-        if line.startswith('+') and not line.startswith('+++'):
-            # AFTER (additions) - bright cyan / lime blue
-            console.print(f"[bright_cyan]{line}[/]")
-        elif line.startswith('-') and not line.startswith('---'):
-            # BEFORE (removals) - bright red / crimson
-            console.print(f"[bright_red]{line}[/]")
-        elif line.startswith('@@'):
-            console.print(f"[yellow]{line}[/]")
-        else:
-            console.print(f"[dim]{line}[/]")
+    # Create side-by-side table
+    table = Table(title=f"📝 Changes to {filename}", show_lines=True, expand=True)
+    table.add_column("Before (Original)", style="red", width=50)
+    table.add_column("After (Patched)", style="green", width=50)
+
+    # Truncate for display
+    old_display = old_content[:2000] if len(old_content) > 2000 else old_content
+    new_display = new_content[:2000] if len(new_content) > 2000 else new_content
+
+    # Add syntax highlighted code
+    try:
+        ext = filename.split('.')[-1] if '.' in filename else 'python'
+        lang = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'rb': 'ruby', 'php': 'php'}.get(ext, ext)
+        old_syntax = Syntax(old_display, lang, line_numbers=True, word_wrap=True)
+        new_syntax = Syntax(new_display, lang, line_numbers=True, word_wrap=True)
+        table.add_row(old_syntax, new_syntax)
+    except:
+        table.add_row(old_display, new_display)
+
+    console.print(table)
+
+    # Also show unified diff below for detailed changes
+    old_lines = old_content.splitlines()
+    new_lines = new_content.splitlines()
+    diff = list(difflib.unified_diff(old_lines, new_lines, lineterm=''))
+
+    if diff:
+        console.print("\n[bold]Line-by-line changes:[/]")
+        for line in diff[2:30]:  # Skip headers, limit output
+            if line.startswith('+'):
+                console.print(f"[bright_green]{line}[/]")
+            elif line.startswith('-'):
+                console.print(f"[bright_red]{line}[/]")
+            elif line.startswith('@@'):
+                console.print(f"[yellow]{line}[/]")
+        if len(diff) > 32:
+            console.print(f"[dim]  ... +{len(diff) - 32} more lines[/]")
     console.print()
 
 
@@ -489,6 +515,17 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
                 result = f"Error: Access denied - path outside workspace: {path}"
                 log_tool_call(name, args, result, (time.time() - start_time) * 1000)
                 return result
+
+            # BACKUP: Save original content for /undo (if file exists)
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    FILE_BACKUPS[path] = f.read()
+                # Also save .bak file
+                with open(path + ".bak", "w") as f:
+                    f.write(FILE_BACKUPS[path])
+                if console:
+                    console.print(f"[dim]💾 Backup saved: {path}.bak[/]")
+
             # Create parent directories if needed
             os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
             with open(path, "w") as f:
@@ -795,10 +832,57 @@ SECURITY TESTING WORKFLOW (when SkyHammer is active):
 3. Test for vulnerabilities (SQLi, XSS, cmd injection, etc.)
 4. Try actual exploits with curl/http requests
 5. Document what worked and what didn't
-6. Write a findings report
+6. Write a findings report with BEFORE vs AFTER comparison
+7. PATCH THE ORIGINAL FILE (do NOT create a new _secure.py file!)
+
+PATCHING RULES - CRITICAL:
+- ALWAYS overwrite the ORIGINAL vulnerable file with the fixed version
+- Do NOT create a new file like "app_secure.py" - patch the original!
+- Show BEFORE vs AFTER code comparison in your report
+- The user will get a confirmation prompt before the file is written
+
+REPORT FORMAT - CLI ONLY (NO MARKDOWN):
+Do NOT use markdown formatting (no ##, **, ```, etc.) - it looks bad in terminal!
+Instead, use plain text with these CLI-friendly formats:
+
+GOOD (CLI-friendly):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VULNERABILITY REPORT: app.py
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[CRITICAL] SQL Injection in /login
+  Status: EXPLOITED
+  Proof: curl -X POST ".../login" -d "username=admin' OR '1'='1"
+
+BEFORE (vulnerable):
+  query = f"SELECT * FROM users WHERE name='{username}'"
+  cursor.execute(query)
+
+AFTER (secure):
+  cursor.execute("SELECT * FROM users WHERE name=?", (username,))
+
+Hacker's Note:
+  The attacker input ' OR '1'='1 makes the WHERE clause always TRUE,
+  bypassing authentication and returning all users.
+
+BAD (markdown - don't use):
+  ## Vulnerabilities
+  **SQL Injection** in `/login`
+  ```python
+  query = f"SELECT..."
+  ```
+
+EDUCATIONAL MODE - "Hacker's Note":
+After each exploit, explain in plain text:
+- WHAT: The vulnerability type
+- WHY: Why the exploit works
+- IMPACT: What damage it enables
+- FIX: The secure code pattern
 
 REMEMBER: Don't explain code, WRITE IT using write_file tool!
-REMEMBER: Keep going until task is complete, then summarize!"""
+REMEMBER: Keep going until task is complete, then summarize!
+REMEMBER: PATCH THE ORIGINAL FILE, not a new _secure copy!
+REMEMBER: NO MARKDOWN - plain text with box characters only!"""
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -850,11 +934,112 @@ REMEMBER: Keep going until task is complete, then summarize!"""
                     show_goals()
                     continue
 
+                elif cmd == "/undo" or cmd == "/rollback":
+                    if not FILE_BACKUPS:
+                        console.print("[yellow]No backups available to restore.[/]")
+                        continue
+
+                    # Show available backups
+                    console.print("\n[bold]Available backups:[/]")
+                    backup_list = list(FILE_BACKUPS.keys())
+                    for i, path in enumerate(backup_list, 1):
+                        console.print(f"  {i}. {path}")
+
+                    if len(backup_list) == 1:
+                        # Auto-restore if only one backup
+                        path = backup_list[0]
+                        with open(path, "w") as f:
+                            f.write(FILE_BACKUPS[path])
+                        console.print(f"\n[green]✓ Restored {path} to original state[/]")
+                        del FILE_BACKUPS[path]
+                        # Remove .bak file
+                        if os.path.exists(path + ".bak"):
+                            os.remove(path + ".bak")
+                    else:
+                        choice = questionary.select(
+                            "Which file to restore?",
+                            choices=[os.path.basename(p) for p in backup_list] + ["All files", "Cancel"]
+                        ).ask()
+                        if choice == "Cancel" or not choice:
+                            continue
+                        elif choice == "All files":
+                            for path in backup_list:
+                                with open(path, "w") as f:
+                                    f.write(FILE_BACKUPS[path])
+                                console.print(f"[green]✓ Restored {path}[/]")
+                                if os.path.exists(path + ".bak"):
+                                    os.remove(path + ".bak")
+                            FILE_BACKUPS.clear()
+                            console.print("[green]All files restored![/]")
+                        else:
+                            # Find the full path
+                            for path in backup_list:
+                                if os.path.basename(path) == choice:
+                                    with open(path, "w") as f:
+                                        f.write(FILE_BACKUPS[path])
+                                    console.print(f"[green]✓ Restored {path}[/]")
+                                    del FILE_BACKUPS[path]
+                                    if os.path.exists(path + ".bak"):
+                                        os.remove(path + ".bak")
+                                    break
+                    continue
+
+                elif cmd == "/pr" or cmd.startswith("/pr "):
+                    # Check if gh CLI is available
+                    gh_check = subprocess.run("which gh", shell=True, capture_output=True, text=True)
+                    if gh_check.returncode != 0:
+                        console.print("[red]GitHub CLI (gh) not installed.[/]")
+                        console.print("[dim]Install with: brew install gh[/]")
+                        continue
+
+                    # Check if in git repo
+                    git_check = subprocess.run("git status", shell=True, capture_output=True, text=True, cwd=WORKSPACE_DIR)
+                    if git_check.returncode != 0:
+                        console.print("[red]Not in a git repository.[/]")
+                        continue
+
+                    # Get PR title
+                    if cmd.startswith("/pr "):
+                        pr_title = cmd[4:].strip()
+                    else:
+                        pr_title = questionary.text(
+                            "PR Title:",
+                            default="Security Fix: Patched vulnerabilities"
+                        ).ask()
+                        if not pr_title:
+                            continue
+
+                    # Create branch and PR
+                    branch_name = f"security-fix-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                    console.print(f"[cyan]Creating branch: {branch_name}[/]")
+
+                    cmds = [
+                        f"git checkout -b {branch_name}",
+                        "git add -A",
+                        f'git commit -m "{pr_title}"',
+                        f"git push -u origin {branch_name}",
+                        f'gh pr create --title "{pr_title}" --body "## Security Fixes\\n\\nThis PR contains security patches generated by SkyHammer.\\n\\n### Changes\\n- Fixed identified vulnerabilities\\n- Applied secure coding practices\\n\\n---\\n🔒 *Generated by SkyHammer - AI Security Agent*"'
+                    ]
+
+                    for c in cmds:
+                        console.print(f"[dim]$ {c}[/]")
+                        result = subprocess.run(c, shell=True, capture_output=True, text=True, cwd=WORKSPACE_DIR)
+                        if result.returncode != 0 and "nothing to commit" not in result.stderr:
+                            console.print(f"[red]Error: {result.stderr}[/]")
+                            break
+                        if result.stdout:
+                            console.print(result.stdout)
+
+                    console.print("[green]✓ Pull request created![/]")
+                    continue
+
                 elif cmd == "/help":
                     console.print(Panel(f"""
 [bold]Commands:[/]
   /help           - Show this help
   /goals          - Show current tasks Gemini is working on
+  /undo           - Rollback last file change (safety feature)
+  /pr [title]     - Create GitHub PR with security fixes
   /workspace PATH - Change sandbox directory (current: {WORKSPACE_DIR})
   /skyhammer      - Toggle SkyHammer security mode
   /auto           - Toggle auto-approve (skip permission prompts)
@@ -866,34 +1051,27 @@ REMEMBER: Keep going until task is complete, then summarize!"""
   !pwd            - Print working directory
   !ls -la         - List files
   !python app.py  - Run a script
-  !uvicorn app:app --port 8000
 
 [bold]Interrupt:[/]
-  Press Ctrl+C    - Stop Gemini mid-workflow
+  Ctrl+C          - Stop Gemini mid-workflow
+
+[bold]Safety Features:[/]
+  - Side-by-side diff before changes
+  - Auto-backup of modified files (.bak)
+  - /undo to instantly rollback
+  - Permission prompts for all actions
 
 [bold]Permission Prompts:[/]
-  When Gemini wants to write files or run commands:
   - Yes           - Allow this action
-  - Yes to all    - Auto-approve all future actions
+  - Yes to all    - Auto-approve session
   - No            - Skip this action
-  - Give feedback - Tell Gemini what to do differently
-
-[bold]Tool Calling:[/]
-  Gemini will ACTUALLY execute these (not just show code):
-  - write_file: Creates real files on disk
-  - read_file: Reads file contents
-  - run_command: Runs shell commands
-  - list_files: Lists directory
-  - search_code: Searches code
-
-[bold]Examples:[/]
-  "create a vulnerable flask app called vuln.py"
-  "run python vuln.py in background"
-  "read the mock_dvwa.py file and explain it"
-  "find all SQL queries in *.py files"
+  - Tell Gemini...  - Give different instructions
 
 [bold]Security Mode (/skyhammer):[/]
-  Adds: security_scan, patch_vulnerability tools
+  - Auto-scans for vulnerabilities
+  - Runs actual exploit tests
+  - Generates security reports
+  - Creates patches with /pr
                     """, title="Gemini Code Help", border_style="cyan"))
                     continue
 
@@ -958,15 +1136,20 @@ REMEMBER: Keep going until task is complete, then summarize!"""
                                     # Add as user message to start security testing
                                     user_input = f"""ATTACK TARGET: {target}
 
-DO NOT ASK FOR PERMISSION OR CONFIRMATION. PROCEED IMMEDIATELY WITH:
-1. Read/analyze the target if it's a file
-2. Start the server if needed (use background: nohup python ... &)
-3. Run actual exploit attempts using curl/http requests
-4. Test for: SQL injection, XSS, command injection, path traversal
-5. Document successful exploits with proof
-6. Generate a final vulnerability report
+PROCEED IMMEDIATELY WITH TESTING:
+1. Probe the target URL for endpoints
+2. Run actual exploit attempts using curl/http requests
+3. Test for: SQL injection, XSS, command injection, path traversal
+4. Document successful exploits with proof
 
-START NOW - do not wait for user input."""
+GENERATE REPORT (NO MARKDOWN - CLI TEXT ONLY):
+Use plain text format with box characters. Show:
+- Each vulnerability with severity [CRITICAL/HIGH/MEDIUM/LOW]
+- Proof of exploit (curl command and response)
+- BEFORE vs AFTER code if source available
+- Hacker's Note explaining why it works
+
+START TESTING NOW."""
                                     messages.append({"role": "user", "content": user_input})
                                     log_conversation("user", user_input)
                                     console.print(f"\n[yellow]Target: {target}[/]")
@@ -1001,16 +1184,26 @@ START NOW - do not wait for user input."""
                                     # Add as user message to start security testing
                                     user_input = f"""SECURITY TEST TARGET: {target}
 
-DO NOT ASK FOR PERMISSION OR CONFIRMATION. PROCEED IMMEDIATELY WITH:
+PROCEED IMMEDIATELY WITH TESTING:
 1. Read the file contents
 2. If it's a web app, start it in background (nohup python {target} > app.log 2>&1 &)
 3. Wait 2 seconds for server to start
 4. Run actual exploit attempts using curl/http requests
 5. Test for: SQL injection, XSS, command injection, path traversal, hardcoded secrets
-6. Document successful exploits with proof (show the curl commands and responses)
-7. Generate a final vulnerability report with severity ratings
+6. Document successful exploits with proof
 
-START TESTING NOW - do not ask for confirmation, just do it."""
+AFTER TESTING - GENERATE REPORT (NO MARKDOWN):
+Use plain CLI text format, NOT markdown. Show:
+- Each vulnerability with severity
+- BEFORE (vulnerable code) vs AFTER (fixed code)
+- Hacker's Note explaining why exploit works
+
+THEN PATCH THE ORIGINAL FILE:
+- Overwrite {target} with the secure version (NOT a new _secure.py file!)
+- The user will confirm before the patch is applied
+- Show side-by-side diff of changes
+
+START TESTING NOW."""
                                     messages.append({"role": "user", "content": user_input})
                                     log_conversation("user", user_input)
                                     console.print(f"\n[yellow]Target: {target}[/]")
