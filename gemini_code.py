@@ -74,7 +74,18 @@ CURRENT_MODEL = "gemini-4-1-fast-reasoning"
 SKYHAMMER_MODE = False  # When True, enables security tools and attack/defense capabilities
 WORKSPACE_DIR = os.getcwd()  # Sandbox - only allow operations within this directory
 AUTO_APPROVE = False  # Skip permission prompts if True
+INTERRUPT_REQUESTED = False  # Flag to interrupt agentic loop
 import difflib  # For diff highlighting
+import threading
+
+# Platform-specific imports for ESC key detection
+try:
+    import select
+    import termios
+    import tty
+    HAS_TERMIOS = True
+except ImportError:
+    HAS_TERMIOS = False  # Windows
 
 # Tool definitions for function calling
 TOOLS = [
@@ -184,8 +195,69 @@ TOOLS = [
 ]
 
 
+def start_interrupt_listener():
+    """Start background thread to listen for ESC key"""
+    global INTERRUPT_REQUESTED
+    INTERRUPT_REQUESTED = False
+
+    if not HAS_TERMIOS:
+        # Windows - use msvcrt if available
+        try:
+            import msvcrt
+
+            def listener():
+                global INTERRUPT_REQUESTED
+                while not INTERRUPT_REQUESTED:
+                    if msvcrt.kbhit():
+                        key = msvcrt.getch()
+                        if key == b'\x1b':  # ESC key
+                            INTERRUPT_REQUESTED = True
+                            if console:
+                                console.print("\n[bold yellow]⚠ ESC pressed - interrupting...[/]")
+                            break
+
+            thread = threading.Thread(target=listener, daemon=True)
+            thread.start()
+            return thread
+        except ImportError:
+            return None  # No interrupt support
+
+    def listener():
+        global INTERRUPT_REQUESTED
+        old_settings = None
+        try:
+            old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
+            while not INTERRUPT_REQUESTED:
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    ch = sys.stdin.read(1)
+                    if ch == '\x1b':  # ESC key
+                        INTERRUPT_REQUESTED = True
+                        if console:
+                            console.print("\n[bold yellow]⚠ ESC pressed - interrupting after current tool...[/]")
+                        break
+        except:
+            pass
+        finally:
+            if old_settings:
+                try:
+                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                except:
+                    pass
+
+    thread = threading.Thread(target=listener, daemon=True)
+    thread.start()
+    return thread
+
+
+def stop_interrupt_listener():
+    """Reset interrupt flag"""
+    global INTERRUPT_REQUESTED
+    INTERRUPT_REQUESTED = False
+
+
 def show_diff(old_content: str, new_content: str, filename: str):
-    """Show diff with green/red highlighting"""
+    """Show diff with color highlighting - red for removed, cyan for added"""
     old_lines = old_content.splitlines(keepends=True)
     new_lines = new_content.splitlines(keepends=True)
     diff = list(difflib.unified_diff(old_lines, new_lines, fromfile=f"a/{filename}", tofile=f"b/{filename}"))
@@ -198,33 +270,35 @@ def show_diff(old_content: str, new_content: str, filename: str):
     for line in diff[:50]:  # Limit output
         line = line.rstrip()
         if line.startswith('+') and not line.startswith('+++'):
-            console.print(f"[green]{line}[/]")
+            # AFTER (additions) - bright cyan / lime blue
+            console.print(f"[bright_cyan]{line}[/]")
         elif line.startswith('-') and not line.startswith('---'):
-            console.print(f"[red]{line}[/]")
+            # BEFORE (removals) - bright red / crimson
+            console.print(f"[bright_red]{line}[/]")
         elif line.startswith('@@'):
-            console.print(f"[cyan]{line}[/]")
+            console.print(f"[yellow]{line}[/]")
         else:
             console.print(f"[dim]{line}[/]")
     console.print()
 
 
 def show_new_file_preview(content: str, filename: str):
-    """Show new file with green highlighting"""
+    """Show new file with cyan highlighting"""
     console.print(f"\n[bold]New file: {filename}[/]")
     lines = content.splitlines()
     for i, line in enumerate(lines[:25], 1):
-        console.print(f"[green]+{i:3}| {line}[/]")
+        console.print(f"[bright_cyan]+{i:3}| {line}[/]")
     if len(lines) > 25:
         console.print(f"[dim]  ... +{len(lines) - 25} more lines[/]")
     console.print()
 
 
-def ask_permission(tool_name: str, args: Dict[str, Any], preview_content: str = "") -> str:
-    """Ask user permission. Returns 'yes', 'no', 'yes_all', or 'edit'"""
+def ask_permission(tool_name: str, args: Dict[str, Any], preview_content: str = "") -> tuple:
+    """Ask user permission. Returns (action, feedback) where action is 'yes', 'no', 'yes_all', or 'feedback'"""
     global AUTO_APPROVE
 
     if AUTO_APPROVE:
-        return "yes"
+        return ("yes", None)
 
     console.print(f"\n[bold yellow]⚡ {tool_name}[/]")
 
@@ -249,20 +323,24 @@ def ask_permission(tool_name: str, args: Dict[str, Any], preview_content: str = 
     # Ask
     choice = questionary.select(
         "Allow?",
-        choices=["Yes", "Yes to all (session)", "No (skip)", "Edit args"],
+        choices=["Yes", "Yes to all (session)", "No (skip)", "Give feedback to Gemini"],
         style=questionary.Style([('selected', 'fg:cyan bold')])
     ).ask()
 
     if not choice:
-        return "no"
+        return ("no", None)
     if "Yes to all" in choice:
         AUTO_APPROVE = True
-        return "yes"
-    if "Yes" in choice:
-        return "yes"
-    if "Edit" in choice:
-        return "edit"
-    return "no"
+        return ("yes", None)
+    if "Yes" == choice:
+        return ("yes", None)
+    if "feedback" in choice.lower():
+        feedback = questionary.text(
+            "What should Gemini do differently?",
+            style=questionary.Style([('answer', 'fg:yellow')])
+        ).ask()
+        return ("feedback", feedback)
+    return ("no", None)
 
 
 def is_safe_path(path: str) -> bool:
@@ -295,13 +373,11 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
             path = args.get("path", "")
             content = args.get("content", "")
             # Ask permission with diff preview
-            permission = ask_permission("write_file", args)
-            if permission == "no":
+            action, feedback = ask_permission("write_file", args)
+            if action == "no":
                 return "Action skipped by user"
-            elif permission == "edit":
-                edited = questionary.text("Edit content:", default=content[:500]).ask()
-                if edited:
-                    content = edited
+            elif action == "feedback":
+                return f"USER FEEDBACK: {feedback}\n\nPlease try again with the user's feedback in mind."
             # Make relative paths absolute within workspace
             if not os.path.isabs(path):
                 path = os.path.join(WORKSPACE_DIR, path)
@@ -330,13 +406,11 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
             if any(d in command for d in dangerous):
                 return "Error: Command blocked for safety"
             # Ask permission
-            permission = ask_permission("run_command", args)
-            if permission == "no":
+            action, feedback = ask_permission("run_command", args)
+            if action == "no":
                 return "Action skipped by user"
-            elif permission == "edit":
-                edited = questionary.text("Edit command:", default=command).ask()
-                if edited:
-                    command = edited
+            elif action == "feedback":
+                return f"USER FEEDBACK: {feedback}\n\nPlease try a different approach based on the user's feedback."
             if console:
                 console.print(f"[yellow]$ {command}[/]")
             result = subprocess.run(
@@ -410,7 +484,7 @@ def get_codebase_context() -> str:
 
 def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
     """Run agentic chat completion - loops until Gemini is done or max iterations"""
-    global CURRENT_MODEL, SKYHAMMER_MODE
+    global CURRENT_MODEL, SKYHAMMER_MODE, INTERRUPT_REQUESTED
     model_id = CURRENT_MODEL
     max_iterations = 25  # Safety limit
     iteration = 0
@@ -426,64 +500,90 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
     else:
         active_tools = None
 
-    while iteration < max_iterations:
-        iteration += 1
+    # Start ESC key listener
+    if console:
+        console.print("[dim](Press ESC to interrupt)[/]")
+    start_interrupt_listener()
 
-        kwargs = {
-            "model": model_id,
-            "messages": messages,
-            "temperature": 0.3,
-            "max_tokens": 4096,
-        }
-        if active_tools:
-            kwargs["tools"] = active_tools
-            kwargs["tool_choice"] = "auto"
+    try:
+        while iteration < max_iterations:
+            iteration += 1
 
-        response = client.chat.completions.create(**kwargs)
-        msg = response.choices[0].message
+            # Check for interrupt
+            if INTERRUPT_REQUESTED:
+                stop_interrupt_listener()
+                return "(Interrupted by user - press ESC again or /clear to reset)"
 
-        # If no tool calls, we're done
-        if not msg.tool_calls:
-            return msg.content or "(No response)"
+            kwargs = {
+                "model": model_id,
+                "messages": messages,
+                "temperature": 0.3,
+                "max_tokens": 4096,
+            }
+            if active_tools:
+                kwargs["tools"] = active_tools
+                kwargs["tool_choice"] = "auto"
 
-        # Process tool calls
-        if console:
-            console.print(f"[dim]Turn {iteration}: {len(msg.tool_calls)} tool calls[/]")
+            response = client.chat.completions.create(**kwargs)
+            msg = response.choices[0].message
 
-        tool_results = []
-        for tc in msg.tool_calls:
-            tool_name = tc.function.name
-            try:
-                tool_args = json.loads(tc.function.arguments)
-            except:
-                tool_args = {}
+            # If no tool calls, we're done
+            if not msg.tool_calls:
+                stop_interrupt_listener()
+                return msg.content or "(No response)"
 
+            # Check for interrupt before processing tools
+            if INTERRUPT_REQUESTED:
+                stop_interrupt_listener()
+                return "(Interrupted by user)"
+
+            # Process tool calls
             if console:
-                console.print(f"[cyan]→ {tool_name}[/]")
+                console.print(f"[dim]Turn {iteration}: {len(msg.tool_calls)} tool calls[/]")
 
-            result = execute_tool(tool_name, tool_args)
-            tool_results.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result
+            tool_results = []
+            for tc in msg.tool_calls:
+                # Check for interrupt between tool calls
+                if INTERRUPT_REQUESTED:
+                    stop_interrupt_listener()
+                    return "(Interrupted by user mid-execution)"
+
+                tool_name = tc.function.name
+                try:
+                    tool_args = json.loads(tc.function.arguments)
+                except:
+                    tool_args = {}
+
+                if console:
+                    console.print(f"[cyan]→ {tool_name}[/]")
+
+                result = execute_tool(tool_name, tool_args)
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result
+                })
+
+            # Add assistant message with tool calls
+            messages.append({
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                    for tc in msg.tool_calls
+                ]
             })
+            messages.extend(tool_results)
 
-        # Add assistant message with tool calls
-        messages.append({
-            "role": "assistant",
-            "content": msg.content or "",
-            "tool_calls": [
-                {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                for tc in msg.tool_calls
-            ]
-        })
-        messages.extend(tool_results)
+            # Show intermediate thoughts if any
+            if msg.content and console:
+                console.print(f"[dim italic]{msg.content[:200]}...[/]" if len(msg.content or "") > 200 else f"[dim italic]{msg.content}[/]")
 
-        # Show intermediate thoughts if any
-        if msg.content and console:
-            console.print(f"[dim italic]{msg.content[:200]}...[/]" if len(msg.content or "") > 200 else f"[dim italic]{msg.content}[/]")
+        stop_interrupt_listener()
+        return "(Max iterations reached - use /clear to reset)"
 
-    return "(Max iterations reached - use /clear to reset)"
+    finally:
+        stop_interrupt_listener()
 
 
 def interactive_mode():
@@ -619,6 +719,7 @@ REMEMBER: Keep going until task is complete, then summarize!"""
   /help           - Show this help
   /workspace PATH - Change sandbox directory (current: {WORKSPACE_DIR})
   /skyhammer      - Toggle SkyHammer security mode
+  /auto           - Toggle auto-approve (skip permission prompts)
   /model          - Switch between Gemini models
   /clear          - Clear conversation
   /exit           - Exit
@@ -628,6 +729,16 @@ REMEMBER: Keep going until task is complete, then summarize!"""
   !ls -la         - List files
   !python app.py  - Run a script
   !uvicorn app:app --port 8000
+
+[bold]Interrupt:[/]
+  Press ESC       - Stop Gemini mid-workflow
+
+[bold]Permission Prompts:[/]
+  When Gemini wants to write files or run commands:
+  - Yes           - Allow this action
+  - Yes to all    - Auto-approve all future actions
+  - No            - Skip this action
+  - Give feedback - Tell Gemini what to do differently
 
 [bold]Tool Calling:[/]
   Gemini will ACTUALLY execute these (not just show code):
@@ -674,8 +785,68 @@ REMEMBER: Keep going until task is complete, then summarize!"""
                 elif cmd == "/skyhammer":
                     SKYHAMMER_MODE = not SKYHAMMER_MODE
                     if SKYHAMMER_MODE:
-                        console.print("[bold green]SkyHammer Mode ACTIVATED[/]")
-                        console.print("[dim]Security tools now available: scan, patch, shell, file ops[/]")
+                        console.print("\n[bold green]╔═══════════════════════════════════════╗[/]")
+                        console.print("[bold green]║      SKYHAMMER MODE ACTIVATED         ║[/]")
+                        console.print("[bold green]╚═══════════════════════════════════════╝[/]\n")
+                        console.print("[dim]Security tools: scan, exploit, patch, shell[/]\n")
+
+                        # Auto-prompt for target
+                        target_type = questionary.select(
+                            "What do you want to test?",
+                            choices=[
+                                "Local file (Python, JS, etc.)",
+                                "Local directory (scan all files)",
+                                "Running web app (URL)",
+                                "Skip - I'll specify later"
+                            ],
+                            style=questionary.Style([('selected', 'fg:green bold')])
+                        ).ask()
+
+                        if target_type and "Skip" not in target_type:
+                            if "URL" in target_type:
+                                target = questionary.text(
+                                    "Enter URL (e.g., http://localhost:5000):",
+                                    style=questionary.Style([('answer', 'fg:cyan')])
+                                ).ask()
+                                if target:
+                                    # Add as user message to start security testing
+                                    user_input = f"Perform a comprehensive security test on {target}. Test for SQL injection, XSS, command injection, and other common vulnerabilities. Report all findings."
+                                    messages.append({"role": "user", "content": user_input})
+                                    console.print(f"\n[yellow]Target: {target}[/]")
+                                    console.print("[dim]Starting security scan...[/]\n")
+                                    try:
+                                        response = chat_completion(messages, use_tools=True)
+                                        console.print()
+                                        if "```" in response:
+                                            console.print(Markdown(response))
+                                        else:
+                                            console.print(Panel(response, border_style="green", title="SkyHammer Report"))
+                                        messages.append({"role": "assistant", "content": response})
+                                    except Exception as e:
+                                        console.print(f"[red]Error: {e}[/]")
+                            else:
+                                target = questionary.path(
+                                    "Enter file/directory path:",
+                                    style=questionary.Style([('answer', 'fg:cyan')])
+                                ).ask()
+                                if target and os.path.exists(target):
+                                    # Add as user message to start security testing
+                                    user_input = f"Analyze {target} for security vulnerabilities. Look for SQL injection, command injection, XSS, hardcoded secrets, insecure deserialization, and other OWASP top 10 issues. Provide a detailed report with code snippets and fix suggestions."
+                                    messages.append({"role": "user", "content": user_input})
+                                    console.print(f"\n[yellow]Target: {target}[/]")
+                                    console.print("[dim]Analyzing for vulnerabilities...[/]\n")
+                                    try:
+                                        response = chat_completion(messages, use_tools=True)
+                                        console.print()
+                                        if "```" in response:
+                                            console.print(Markdown(response))
+                                        else:
+                                            console.print(Panel(response, border_style="green", title="SkyHammer Report"))
+                                        messages.append({"role": "assistant", "content": response})
+                                    except Exception as e:
+                                        console.print(f"[red]Error: {e}[/]")
+                                elif target:
+                                    console.print(f"[red]Path not found: {target}[/]")
                     else:
                         console.print("[bold red]SkyHammer Mode DEACTIVATED[/]")
                         console.print("[dim]Running in standard coding assistant mode[/]")

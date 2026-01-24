@@ -36,10 +36,8 @@ def login():
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
     
-    # PATCHED: Used parameterized queries to prevent SQL injection by separating SQL code from user input
-    query = "SELECT * FROM users WHERE username=? AND password=?"
-    print(f"Executed query: {query}")  # For debugging
-    c.execute(query, (username, password))
+    # PATCHED: Fixed SQL injection vulnerability by using parameterized queries instead of f-string interpolation
+    c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
     user = c.fetchone()
     conn.close()
     
