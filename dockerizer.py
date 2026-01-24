@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AthenaGuard Auto-Dockerizer
+SkyHammer Auto-Dockerizer
 
 Point it at a repo/folder and Gemini generates Dockerfile + docker-compose.yml.
 Can also clone a GitHub repo and set it up automatically.
@@ -108,7 +108,7 @@ def scan_directory(path: str) -> dict:
 def auto_dockerize(target_path: str = ".") -> bool:
     """Generate Dockerfile and docker-compose.yml using Gemini"""
     log(f"\n{'='*60}", "cyan")
-    log("AthenaGuard Auto-Dockerizer", "bold cyan")
+    log("SkyHammer Auto-Dockerizer", "bold cyan")
     log(f"{'='*60}", "cyan")
 
     # Handle GitHub URLs
@@ -163,7 +163,7 @@ OUTPUT FORMAT:
 
     try:
         response = client.chat.completions.create(
-            model="gemini-4-1-fast-reasoning",
+            model="gemini-4-1-fast-reasoning",  # $0.20/M tokens - spam it!
             messages=[
                 {
                     "role": "system",

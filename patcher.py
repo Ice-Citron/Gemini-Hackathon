@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AthenaGuard Patcher - Blue Team Defense
+SkyHammer Patcher - Blue Team Defense
 
 Takes vulnerable code + attack evidence and generates a secure version using Gemini.
 
@@ -45,7 +45,7 @@ def patch_code(source_file: str, vulnerability_type: str, attack_evidence: str) 
         Path to the patched file
     """
     print(f"\n{'='*60}")
-    print("AthenaGuard Patcher")
+    print("SkyHammer Patcher")
     print("Gemini-Powered Security Remediation")
     print(f"{'='*60}")
 
@@ -142,7 +142,7 @@ VULNERABLE SOURCE CODE:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AthenaGuard Patcher - Auto-fix security vulnerabilities with Gemini",
+        description="SkyHammer Patcher - Auto-fix security vulnerabilities with Gemini",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AthenaGuard Command Center v3.0
+SkyHammer Command Center v3.0
 
 Interactive CLI for autonomous security testing and remediation.
 Features:
@@ -69,7 +69,7 @@ def render_header():
         icon = "🔵"
 
     grid.add_row(
-        Text("AthenaGuard", style="bold cyan"),
+        Text("SkyHammer", style="bold cyan"),
         Text("Command Center v3.0", style="dim"),
         Text(f"{icon} {STATUS}", style=style)
     )
@@ -414,6 +414,14 @@ def show_status():
     console.print(table)
 
 
+def run_gemini_code():
+    """Launch Gemini Code interactive mode"""
+    global STATUS
+    STATUS = "GEMINI CODE MODE"
+    os.system("python gemini_code.py")
+    STATUS = "IDLE"
+
+
 def main_menu():
     """Main interactive menu"""
     global STATUS
@@ -426,15 +434,16 @@ def main_menu():
         choice = questionary.select(
             "Select operation:",
             choices=[
-                "1. ⚔️  Attack: Target URL (Paste Link)",
-                "2. 🧪 Attack: Synthetic Challenge (Generate & Attack)",
-                "3. 🛡️  Defense: AI Patcher (Fix Code)",
-                "4. 🚀 Deploy: Hot-Swap Patch",
-                "5. 🐳 DevOps: Auto-Dockerize",
-                "6. ♻️  Reset: Restore Vulnerable State",
-                "7. 🎬 Demo: Run Automated Loop",
-                "8. 📊 Status: Show System Info",
-                "9. 🚪 Exit"
+                "1. 💬 Gemini Code: Interactive Coding Assistant",
+                "2. ⚔️  Attack: Target URL (Paste Link)",
+                "3. 🧪 Attack: Synthetic Challenge (Generate & Attack)",
+                "4. 🛡️  Defense: AI Patcher (Fix Code)",
+                "5. 🚀 Deploy: Hot-Swap Patch",
+                "6. 🐳 DevOps: Auto-Dockerize",
+                "7. ♻️  Reset: Restore Vulnerable State",
+                "8. 🎬 Demo: Run Automated Loop",
+                "9. 📊 Status: Show System Info",
+                "0. 🚪 Exit"
             ],
             style=questionary.Style([
                 ('selected', 'fg:cyan bold'),
@@ -446,22 +455,24 @@ def main_menu():
             continue
 
         if "1." in choice:
-            attack_url()
+            run_gemini_code()
         elif "2." in choice:
-            attack_synthetic()
+            attack_url()
         elif "3." in choice:
-            run_patcher()
+            attack_synthetic()
         elif "4." in choice:
-            run_deploy()
+            run_patcher()
         elif "5." in choice:
-            run_dockerizer()
+            run_deploy()
         elif "6." in choice:
-            run_reset()
+            run_dockerizer()
         elif "7." in choice:
-            run_auto_demo()
+            run_reset()
         elif "8." in choice:
-            show_status()
+            run_auto_demo()
         elif "9." in choice:
+            show_status()
+        elif "0." in choice:
             console.print("\n[cyan]Goodbye![/]")
             sys.exit(0)
 
@@ -470,7 +481,7 @@ def main_menu():
 
 def main():
     """Entry point"""
-    console.print("\n[bold cyan]AthenaGuard Command Center[/]")
+    console.print("\n[bold cyan]SkyHammer Command Center[/]")
     console.print("[dim]Autonomous AI-Powered Security System[/]")
     console.print("[dim]Powered by Gemini-4[/]\n")
 

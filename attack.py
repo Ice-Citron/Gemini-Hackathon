@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AthenaGuard Attack CLI
+SkyHammer Attack CLI
 
 Run Gemini-powered security agent to attack DVWA.
 
@@ -482,7 +482,7 @@ def list_challenges():
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="AthenaGuard Attack CLI - Gemini-powered DVWA attacker",
+        description="SkyHammer Attack CLI - Gemini-powered DVWA attacker",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -533,7 +533,7 @@ Examples:
     challenge = CHALLENGES[args.challenge]
 
     print("\n" + "=" * 60)
-    print("AthenaGuard Attack CLI")
+    print("SkyHammer Attack CLI")
     print("Gemini-Powered Security Agent")
     print("=" * 60)
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AthenaGuard Synthetic Vulnerability Generator v2.0
+SkyHammer Synthetic Vulnerability Generator v2.0
 
 Uses Gemini to generate new vulnerable Flask applications on-the-fly.
 Supports: SQL Injection, Command Injection, XSS, LFI, Path Traversal, RCE
@@ -85,7 +85,7 @@ def generate_app(vuln_type: str) -> str:
     Generate a synthetic vulnerable Flask application.
     """
     log(f"\n{'='*60}", "cyan")
-    log("AthenaGuard Synthetic Generator v2.0", "bold cyan")
+    log("SkyHammer Synthetic Generator v2.0", "bold cyan")
     log(f"{'='*60}", "cyan")
 
     log(f"\n[+] Vulnerability Type: {vuln_type}", "yellow")

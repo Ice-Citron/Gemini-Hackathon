@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AthenaGuard Demo UI
+SkyHammer Demo UI
 
 A rich terminal UI that orchestrates the full attack -> patch -> verify loop.
 
@@ -56,7 +56,7 @@ def make_layout():
 
 
 class DemoOrchestrator:
-    """Orchestrates the AthenaGuard demo"""
+    """Orchestrates the SkyHammer demo"""
 
     def __init__(self):
         self.layout = make_layout()
@@ -75,7 +75,7 @@ class DemoOrchestrator:
         else:
             color = "blue"
 
-        title = Text("AthenaGuard | Autonomous Defense System", style="bold white")
+        title = Text("SkyHammer | Autonomous Defense System", style="bold white")
         grid = Table.grid(expand=True)
         grid.add_column(justify="left")
         grid.add_column(justify="right")
@@ -311,7 +311,7 @@ class DemoOrchestrator:
 
 
 def main():
-    console.print("\n[bold cyan]AthenaGuard Demo[/]")
+    console.print("\n[bold cyan]SkyHammer Demo[/]")
     console.print("[dim]Autonomous AI-Powered Defense System[/]\n")
 
     # Check if mock_dvwa.py is running
