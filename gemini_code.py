@@ -93,6 +93,10 @@ except ImportError:
 RUN_DIR = None  # Will be set when session starts
 LOG_FILE = None  # Combined log file for tool calls, API calls, and conversation
 
+# Task tracking for /goals
+CURRENT_TASKS = []  # List of current tasks Gemini is working on
+CURRENT_TASK_STATUS = "idle"  # idle, thinking, executing, done
+
 # Tool definitions for function calling
 TOOLS = [
     {
@@ -286,6 +290,40 @@ def resume_listener():
     """Resume the ESC listener after prompts"""
     global LISTENER_PAUSED
     LISTENER_PAUSED = False
+
+
+def set_task_status(status: str, tasks: List[str] = None):
+    """Update current task status and optionally the task list"""
+    global CURRENT_TASK_STATUS, CURRENT_TASKS
+    CURRENT_TASK_STATUS = status
+    if tasks is not None:
+        CURRENT_TASKS = tasks
+
+
+def show_goals():
+    """Display current goals/tasks"""
+    if not console:
+        return
+
+    if not CURRENT_TASKS and CURRENT_TASK_STATUS == "idle":
+        console.print("[dim]No active tasks. Give Gemini something to do![/]")
+        return
+
+    status_colors = {
+        "idle": "dim",
+        "thinking": "yellow",
+        "executing": "cyan",
+        "done": "green"
+    }
+    color = status_colors.get(CURRENT_TASK_STATUS, "white")
+
+    console.print(f"\n[bold]Current Status:[/] [{color}]{CURRENT_TASK_STATUS.upper()}[/]")
+
+    if CURRENT_TASKS:
+        console.print("[bold]Tasks:[/]")
+        for i, task in enumerate(CURRENT_TASKS, 1):
+            console.print(f"  {i}. {task}")
+    console.print()
 
 
 def start_interrupt_listener():
@@ -584,7 +622,9 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
 
     # Ctrl+C can be used to interrupt
     if console:
-        console.print("[dim](Press Ctrl+C to interrupt)[/]")
+        console.print("[dim](Press Ctrl+C to interrupt, /goals to see tasks)[/]")
+
+    set_task_status("thinking")
 
     try:
         while iteration < max_iterations:
@@ -592,8 +632,10 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
 
             # Check for interrupt flag
             if INTERRUPT_REQUESTED:
+                set_task_status("idle")
                 return "(Interrupted by user)"
 
+            set_task_status("thinking")
             kwargs = {
                 "model": model_id,
                 "messages": messages,
@@ -611,12 +653,18 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
             tool_call_names = [tc.function.name for tc in msg.tool_calls] if msg.tool_calls else []
             log_api_call(model_id, len(messages), msg.content or "", tool_call_names)
 
+            # Update tasks from tool calls
+            if tool_call_names:
+                set_task_status("executing", tool_call_names)
+
             # If no tool calls, we're done
             if not msg.tool_calls:
+                set_task_status("done")
                 return msg.content or "(No response)"
 
             # Check for interrupt before processing tools
             if INTERRUPT_REQUESTED:
+                set_task_status("idle")
                 return "(Interrupted by user)"
 
             # Process tool calls
@@ -794,13 +842,19 @@ REMEMBER: Keep going until task is complete, then summarize!"""
 
                 elif cmd == "/clear":
                     messages = [{"role": "system", "content": system_prompt}]
+                    set_task_status("idle", [])
                     console.print("[dim]Conversation cleared.[/]")
+                    continue
+
+                elif cmd == "/goals" or cmd == "/tasks":
+                    show_goals()
                     continue
 
                 elif cmd == "/help":
                     console.print(Panel(f"""
 [bold]Commands:[/]
   /help           - Show this help
+  /goals          - Show current tasks Gemini is working on
   /workspace PATH - Change sandbox directory (current: {WORKSPACE_DIR})
   /skyhammer      - Toggle SkyHammer security mode
   /auto           - Toggle auto-approve (skip permission prompts)
@@ -893,9 +947,28 @@ REMEMBER: Keep going until task is complete, then summarize!"""
                                     style=questionary.Style([('answer', 'fg:cyan')])
                                 ).ask()
                                 if target:
+                                    # Set initial tasks
+                                    set_task_status("executing", [
+                                        "Probe target for vulnerabilities",
+                                        "Test SQL injection",
+                                        "Test XSS",
+                                        "Test command injection",
+                                        "Generate report"
+                                    ])
                                     # Add as user message to start security testing
-                                    user_input = f"Perform a comprehensive security test on {target}. Test for SQL injection, XSS, command injection, and other common vulnerabilities. Report all findings."
+                                    user_input = f"""ATTACK TARGET: {target}
+
+DO NOT ASK FOR PERMISSION OR CONFIRMATION. PROCEED IMMEDIATELY WITH:
+1. Read/analyze the target if it's a file
+2. Start the server if needed (use background: nohup python ... &)
+3. Run actual exploit attempts using curl/http requests
+4. Test for: SQL injection, XSS, command injection, path traversal
+5. Document successful exploits with proof
+6. Generate a final vulnerability report
+
+START NOW - do not wait for user input."""
                                     messages.append({"role": "user", "content": user_input})
+                                    log_conversation("user", user_input)
                                     console.print(f"\n[yellow]Target: {target}[/]")
                                     console.print("[dim]Starting security scan...[/]\n")
                                     try:
@@ -906,19 +979,42 @@ REMEMBER: Keep going until task is complete, then summarize!"""
                                         else:
                                             console.print(Panel(response, border_style="green", title="SkyHammer Report"))
                                         messages.append({"role": "assistant", "content": response})
+                                        log_conversation("assistant", response)
+                                        set_task_status("done")
                                     except Exception as e:
                                         console.print(f"[red]Error: {e}[/]")
+                                        set_task_status("idle")
                             else:
                                 target = questionary.path(
                                     "Enter file/directory path:",
                                     style=questionary.Style([('answer', 'fg:cyan')])
                                 ).ask()
                                 if target and os.path.exists(target):
+                                    # Set initial tasks
+                                    set_task_status("executing", [
+                                        f"Read and analyze {target}",
+                                        "Identify vulnerability patterns",
+                                        "Start server if web app",
+                                        "Run exploit tests",
+                                        "Generate vulnerability report"
+                                    ])
                                     # Add as user message to start security testing
-                                    user_input = f"Analyze {target} for security vulnerabilities. Look for SQL injection, command injection, XSS, hardcoded secrets, insecure deserialization, and other OWASP top 10 issues. Provide a detailed report with code snippets and fix suggestions."
+                                    user_input = f"""SECURITY TEST TARGET: {target}
+
+DO NOT ASK FOR PERMISSION OR CONFIRMATION. PROCEED IMMEDIATELY WITH:
+1. Read the file contents
+2. If it's a web app, start it in background (nohup python {target} > app.log 2>&1 &)
+3. Wait 2 seconds for server to start
+4. Run actual exploit attempts using curl/http requests
+5. Test for: SQL injection, XSS, command injection, path traversal, hardcoded secrets
+6. Document successful exploits with proof (show the curl commands and responses)
+7. Generate a final vulnerability report with severity ratings
+
+START TESTING NOW - do not ask for confirmation, just do it."""
                                     messages.append({"role": "user", "content": user_input})
+                                    log_conversation("user", user_input)
                                     console.print(f"\n[yellow]Target: {target}[/]")
-                                    console.print("[dim]Analyzing for vulnerabilities...[/]\n")
+                                    console.print("[dim]Analyzing and testing for vulnerabilities...[/]\n")
                                     try:
                                         response = chat_completion(messages, use_tools=True)
                                         console.print()
@@ -927,8 +1023,11 @@ REMEMBER: Keep going until task is complete, then summarize!"""
                                         else:
                                             console.print(Panel(response, border_style="green", title="SkyHammer Report"))
                                         messages.append({"role": "assistant", "content": response})
+                                        log_conversation("assistant", response)
+                                        set_task_status("done")
                                     except Exception as e:
                                         console.print(f"[red]Error: {e}[/]")
+                                        set_task_status("idle")
                                 elif target:
                                     console.print(f"[red]Path not found: {target}[/]")
                     else:
