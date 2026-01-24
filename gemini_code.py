@@ -72,6 +72,7 @@ MODELS = {
 # Current settings
 CURRENT_MODEL = "gemini-4-1-fast-reasoning"
 SKYHAMMER_MODE = False  # When True, enables security tools and attack/defense capabilities
+WORKSPACE_DIR = os.getcwd()  # Sandbox - only allow operations within this directory
 
 # Tool definitions for function calling
 TOOLS = [
@@ -286,9 +287,16 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
         "max_tokens": 4096,
     }
 
-    # Only include security tools if SkyHammer mode is active
-    if use_tools and SKYHAMMER_MODE:
-        kwargs["tools"] = TOOLS
+    # Always include basic tools; security tools require SkyHammer mode
+    if use_tools:
+        # Basic tools always available
+        basic_tools = [t for t in TOOLS if t["function"]["name"] in
+                       ["read_file", "write_file", "list_files", "run_command", "search_code"]]
+        # Security tools only in SkyHammer mode
+        if SKYHAMMER_MODE:
+            kwargs["tools"] = TOOLS
+        else:
+            kwargs["tools"] = basic_tools
         kwargs["tool_choice"] = "auto"
 
     response = client.chat.completions.create(**kwargs)
@@ -348,6 +356,7 @@ def interactive_mode():
 
     skyhammer_status = "[bold red]OFF[/]" if not SKYHAMMER_MODE else "[bold green]ON[/]"
     console.print(f"[dim]Commands: /help, /skyhammer, /model, /apikey, /clear, /exit[/]")
+    console.print(f"[dim]Bash mode: !command (e.g. !ls, !pwd, !cat file.py)[/]")
     console.print(f"[dim]Model: {CURRENT_MODEL} | SkyHammer: {skyhammer_status}[/]")
     console.print()
 
@@ -386,6 +395,26 @@ Guidelines:
             if not user_input:
                 continue
 
+            # Handle ! bash mode - direct shell execution
+            if user_input.startswith("!"):
+                bash_cmd = user_input[1:].strip()
+                if bash_cmd:
+                    console.print(f"[dim]$ {bash_cmd}[/]")
+                    try:
+                        result = subprocess.run(
+                            bash_cmd, shell=True, capture_output=True, text=True, timeout=60
+                        )
+                        output = result.stdout + result.stderr
+                        if output.strip():
+                            console.print(Panel(output[:3000], title="Output", border_style="blue"))
+                        else:
+                            console.print("[dim](no output)[/]")
+                    except subprocess.TimeoutExpired:
+                        console.print("[red]Command timed out (60s)[/]")
+                    except Exception as e:
+                        console.print(f"[red]Error: {e}[/]")
+                continue
+
             # Handle commands
             if user_input.startswith("/"):
                 cmd = user_input.lower().strip()
@@ -411,18 +440,26 @@ Guidelines:
   /clear      - Clear conversation
   /exit       - Exit
 
-[bold]SkyHammer Mode:[/]
-  When activated, Gemini Code gains access to security tools:
-  - File read/write, shell commands, code search
-  - Security scanning and vulnerability detection
-  - Auto-patching and remediation
+[bold]Bash Mode:[/]
+  Prefix any command with ! to run it directly in the shell:
+  !pwd        - Print working directory
+  !ls -la     - List files
+  !cat file   - Show file contents
+  !python app.py - Run a Python script
+
+[bold]Tool Calling:[/]
+  Gemini can automatically use these tools:
+  - read_file, write_file: File operations
+  - list_files: Directory listing
+  - run_command: Execute shell commands
+  - search_code: Search patterns in code
+  (SkyHammer mode adds: security_scan, patch_vulnerability)
 
 [bold]Examples:[/]
+  "create a file called test.py with a hello world"
   "read the mock_dvwa.py file"
   "find all SQL queries in the code"
-  "create a new Flask app with user auth"
-  "scan this file for vulnerabilities"
-  "fix the SQL injection in mock_dvwa.py"
+  "run ls -la in the current directory"
                     """, title="Gemini Code Help", border_style="cyan"))
                     continue
 

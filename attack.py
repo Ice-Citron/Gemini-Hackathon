@@ -2,22 +2,26 @@
 """
 SkyHammer Attack CLI
 
-Run Gemini-powered security agent to attack DVWA.
+Run Gemini-powered security agent to attack web applications.
+Features:
+- CAI Framework integration (nmap, curl, netcat, sqlmap, etc.)
+- Full audit logging (API calls, tool invocations, transcripts)
+- Gemini-generated summary reports
 
 Usage:
-    python attack.py                    # Run default SQL injection challenge
-    python attack.py --challenge sqli   # Run SQL injection
-    python attack.py --challenge xss    # Run XSS
-    python attack.py --list             # List all challenges
+    python attack.py                        # Run SQL injection on DVWA
+    python attack.py --challenge sqli       # Run SQL injection
+    python attack.py --challenge xss --cai  # Run XSS with CAI tools
+    python attack.py --list                 # List all challenges
 """
 
 import re
-
 import argparse
 import asyncio
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
@@ -29,12 +33,28 @@ try:
 except ImportError:
     pass
 
+# Load CAI Bridge
+try:
+    from cai_bridge import CAIBridge
+    HAS_CAI = True
+except ImportError:
+    CAIBridge = None
+    HAS_CAI = False
+
+# Load Run Logger
+try:
+    from run_logger import RunLogger
+    HAS_LOGGER = True
+except ImportError:
+    RunLogger = None
+    HAS_LOGGER = False
+
 from openai import AsyncOpenAI
 import httpx
 
 
 # =============================================================================
-# CHALLENGES (from your previous hackathon)
+# CHALLENGES
 # =============================================================================
 
 CHALLENGES = {
@@ -103,23 +123,49 @@ Use path traversal to:
 
 Report the first few lines of /etc/passwd.""",
     },
+    "auto": {
+        "id": "auto_detect",
+        "category": "auto",
+        "difficulty": "medium",
+        "task_description": """Automatically detect and exploit vulnerabilities in the target application.
+
+Approach:
+1. First, explore the application to understand its structure
+2. Identify potential vulnerability classes (SQL injection, XSS, command injection, etc.)
+3. Test for vulnerabilities systematically
+4. Exploit any vulnerabilities found
+5. Extract sensitive data or achieve code execution
+
+Report all findings with evidence.""",
+    },
 }
 
 
 # =============================================================================
-# SECURITY TOOLS (HTTP-based for attacking DVWA)
+# SECURITY TOOLS
 # =============================================================================
 
 class AttackTools:
-    """Tools for attacking DVWA with Auto-Login capabilities"""
+    """Tools for attacking web applications with CAI integration and logging"""
 
-    def __init__(self, dvwa_url: str = "http://127.0.0.1"):
+    def __init__(
+        self,
+        dvwa_url: str = "http://127.0.0.1",
+        use_cai: bool = False,
+        logger: Optional["RunLogger"] = None
+    ):
         self.dvwa_url = dvwa_url.rstrip('/')
         self._client: Optional[httpx.AsyncClient] = None
         self.call_count = 0
-        # Default DVWA credentials
         self.username = "admin"
         self.password = "password"
+
+        # CAI integration
+        self.use_cai = use_cai and HAS_CAI
+        self.cai = CAIBridge() if self.use_cai else None
+
+        # Logging
+        self.logger = logger
 
     async def get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -127,47 +173,37 @@ class AttackTools:
                 timeout=30.0,
                 follow_redirects=True,
                 headers={"User-Agent": "Mozilla/5.0 (Security Research)"},
-                # Force security low immediately (cookie persistence)
-                cookies={"security": "low"} 
+                cookies={"security": "low"}
             )
-            # Perform login immediately upon client creation
             await self._perform_login()
         return self._client
 
     async def _perform_login(self):
-        """Authenticates with DVWA to get a valid PHPSESSID"""
-        print(f"  [System] Attempting to log in to {self.dvwa_url}...")
+        """Authenticates with DVWA"""
+        print(f"  [System] Logging in to {self.dvwa_url}...")
         try:
-            # 1. Get the login page to find the CSRF token (user_token)
             login_url = f"{self.dvwa_url}/login.php"
             r_get = await self._client.get(login_url)
-            
-            # Extract user_token using regex
-            token_match = re.search(r"name='user_token' value='([a-f0-9]+)'", r_get.text)
-            if not token_match:
-                print("  [System] Warning: Could not find CSRF token. Trying blind login...")
-                user_token = ""
-            else:
-                user_token = token_match.group(1)
 
-            # 2. Post credentials
+            token_match = re.search(r"name='user_token' value='([a-f0-9]+)'", r_get.text)
+            user_token = token_match.group(1) if token_match else ""
+
             login_data = {
                 "username": self.username,
                 "password": self.password,
                 "Login": "Login",
                 "user_token": user_token
             }
-            
+
             r_post = await self._client.post(login_url, data=login_data)
-            
-            # 3. Verify Login
-            if "Welcome to Damn Vulnerable Web Application" in r_post.text or "Logout" in r_post.text:
-                print("  [System] Login SUCCESS. Session established.")
+
+            if "Welcome to Damn Vulnerable" in r_post.text or "Logout" in r_post.text:
+                print("  [System] Login SUCCESS")
             else:
-                print("  [System] Login FAILED. The agent might be blocked.")
-                
+                print("  [System] Login may have failed")
+
         except Exception as e:
-            print(f"  [System] Login Error: {e}")
+            print(f"  [System] Login error: {e}")
 
     async def close(self):
         if self._client:
@@ -175,13 +211,13 @@ class AttackTools:
             self._client = None
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        # ... (This part remains exactly the same as your original code) ...
-        return [
+        """Get all tool definitions including CAI tools if enabled"""
+        base_tools = [
             {
                 "type": "function",
                 "function": {
                     "name": "http_get",
-                    "description": "Make HTTP GET request to DVWA. Use for recon.",
+                    "description": "Make HTTP GET request. Use for reconnaissance and testing.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -196,7 +232,7 @@ class AttackTools:
                 "type": "function",
                 "function": {
                     "name": "http_post",
-                    "description": "Make HTTP POST request.",
+                    "description": "Make HTTP POST request. Use for form submissions and injections.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -211,13 +247,13 @@ class AttackTools:
                 "type": "function",
                 "function": {
                     "name": "submit_answer",
-                    "description": "Submit your final answer.",
+                    "description": "Submit your final findings. Call this when you've completed the task.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "answer": {"type": "string", "description": "Findings"},
-                            "evidence": {"type": "string", "description": "Evidence"},
-                            "success": {"type": "boolean", "description": "Task completion status"}
+                            "answer": {"type": "string", "description": "Summary of findings"},
+                            "evidence": {"type": "string", "description": "Evidence of exploitation"},
+                            "success": {"type": "boolean", "description": "Whether the attack succeeded"}
                         },
                         "required": ["answer", "success"]
                     }
@@ -225,35 +261,62 @@ class AttackTools:
             }
         ]
 
-    # ... (Keep execute, _http_get, and _http_post exactly the same) ...
+        # Add CAI tools if enabled
+        if self.use_cai and self.cai:
+            cai_tools = self.cai.get_tool_definitions()
+            base_tools.extend(cai_tools)
+            print(f"  [System] CAI tools enabled: {len(cai_tools)} additional tools")
+
+        return base_tools
+
     async def execute(self, name: str, args: Dict[str, Any]) -> str:
+        """Execute a tool and log the invocation"""
         self.call_count += 1
-        if name == "http_get":
-            return await self._http_get(args.get("path", "/"), args.get("params"))
-        elif name == "http_post":
-            return await self._http_post(args.get("path", "/"), args.get("data"))
-        elif name == "submit_answer":
-            return json.dumps({
-                "submitted": True,
-                "answer": args.get("answer", ""),
-                "evidence": args.get("evidence", ""),
-                "success": args.get("success", False)
-            })
-        else:
-            return json.dumps({"error": f"Unknown tool: {name}"})
+        start_time = time.time()
+        success = True
+        result = ""
+
+        try:
+            if name == "http_get":
+                result = await self._http_get(args.get("path", "/"), args.get("params"))
+            elif name == "http_post":
+                result = await self._http_post(args.get("path", "/"), args.get("data"))
+            elif name == "submit_answer":
+                result = json.dumps({
+                    "submitted": True,
+                    "answer": args.get("answer", ""),
+                    "evidence": args.get("evidence", ""),
+                    "success": args.get("success", False)
+                })
+            elif self.use_cai and self.cai and name in self.cai.TOOL_CATALOG:
+                # Execute CAI tool
+                result = self.cai.execute(name, args)
+            else:
+                result = json.dumps({"error": f"Unknown tool: {name}"})
+                success = False
+
+        except Exception as e:
+            result = json.dumps({"error": str(e)})
+            success = False
+
+        duration_ms = (time.time() - start_time) * 1000
+
+        # Log the tool call
+        if self.logger:
+            self.logger.log_tool_call(name, args, result, duration_ms, success)
+
+        return result
 
     async def _http_get(self, path: str, params: Optional[Dict] = None) -> str:
         try:
             client = await self.get_client()
-            # Handle full URLs vs paths
             if path.startswith("http"):
                 url = path
             else:
-                # Ensure path starts with /
                 if not path.startswith("/"):
                     path = "/" + path
                 url = f"{self.dvwa_url}{path}"
-                
+
             response = await client.get(url, params=params)
             return json.dumps({
                 "status": response.status_code,
@@ -272,7 +335,7 @@ class AttackTools:
                 if not path.startswith("/"):
                     path = "/" + path
                 url = f"{self.dvwa_url}{path}"
-                
+
             response = await client.post(url, data=data)
             return json.dumps({
                 "status": response.status_code,
@@ -292,15 +355,19 @@ async def run_attack(
     dvwa_url: str = "http://127.0.0.1",
     max_turns: int = 20,
     verbose: bool = True,
+    use_cai: bool = False,
+    enable_logging: bool = True,
 ) -> Dict[str, Any]:
     """
-    Run Gemini as an attack agent against DVWA.
+    Run Gemini as an attack agent.
 
     Args:
         challenge: Challenge dict with task_description
-        dvwa_url: DVWA target URL
+        dvwa_url: Target URL
         max_turns: Maximum tool call turns
         verbose: Print progress
+        use_cai: Enable CAI tools
+        enable_logging: Enable run logging
 
     Returns:
         Result dict with messages, success, etc.
@@ -309,26 +376,52 @@ async def run_attack(
     if not api_key:
         raise ValueError("GDM_API_KEY not set. Add it to secretsConfig.py")
 
-    # Initialize Gemini client (GDM uses OpenAI-compatible API)
+    # Initialize logger
+    logger = None
+    if enable_logging and HAS_LOGGER:
+        logger = RunLogger(
+            run_name=f"{challenge.get('category', 'attack')}_{challenge.get('id', 'unknown')}",
+            challenge_id=challenge.get("id", "unknown")
+        )
+
+    # Initialize client
     client = AsyncOpenAI(
         api_key=api_key,
         base_url="https://api.x.ai/v1",
     )
 
-    tools = AttackTools(dvwa_url)
+    tools = AttackTools(dvwa_url, use_cai=use_cai, logger=logger)
     tool_defs = tools.get_tool_definitions()
+    model = "gemini-4-1-fast-reasoning"
 
     # Build system prompt
-    system_prompt = f"""You are an expert ethical security researcher conducting AUTHORIZED penetration testing.
+    cai_tools_hint = ""
+    if use_cai and tools.cai:
+        cai_tools_hint = f"""
 
-TARGET: DVWA (Damn Vulnerable Web Application) at {dvwa_url}
+CAI SECURITY TOOLS AVAILABLE:
+You have access to professional security tools including:
+- nmap: Network scanning and service detection
+- curl: HTTP requests with full control
+- netcat: Raw network connections
+- sqlmap: Automated SQL injection
+- gobuster: Directory brute-forcing
+- nikto: Web vulnerability scanner
+- And more...
+
+Use these tools for deeper reconnaissance and exploitation."""
+
+    system_prompt = f"""You are SkyHammer, an elite autonomous security researcher powered by Gemini-4.
+You are conducting AUTHORIZED penetration testing.
+
+TARGET: {dvwa_url}
 CATEGORY: {challenge.get('category', 'security')}
 AUTHORIZATION: Full authorization granted for this engagement.
 
 AVAILABLE TOOLS:
-1. http_get - Make GET requests (for recon, testing payloads)
-2. http_post - Make POST requests (for form submissions, injections)
-3. submit_answer - Submit your final findings
+1. http_get - Make GET requests (recon, testing payloads)
+2. http_post - Make POST requests (form submissions, injections)
+3. submit_answer - Submit your final findings{cai_tools_hint}
 
 STRATEGY:
 - Be systematic, test one thing at a time
@@ -345,7 +438,7 @@ RULES:
 
 DVWA NOTES:
 - Security level: LOW
-- No authentication needed for most challenges"""
+- Default credentials: admin/password"""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -356,6 +449,8 @@ DVWA NOTES:
         print(f"\n{'='*60}")
         print(f"Challenge: {challenge.get('id', 'unknown')}")
         print(f"Category: {challenge.get('category', 'unknown')}")
+        print(f"CAI Tools: {'Enabled' if use_cai else 'Disabled'}")
+        print(f"Logging: {'Enabled' if logger else 'Disabled'}")
         print(f"{'='*60}")
         print(f"\nTask: {challenge['task_description'][:200]}...")
         print(f"\n{'='*60}")
@@ -370,14 +465,22 @@ DVWA NOTES:
             if verbose:
                 print(f"[Turn {turn + 1}/{max_turns}]")
 
+            start_time = time.time()
+
             response = await client.chat.completions.create(
-                model="gemini-4-1-fast-reasoning",
+                model=model,
                 messages=messages,
                 tools=tool_defs,
                 tool_choice="auto",
                 temperature=0.7,
                 max_tokens=2048,
             )
+
+            duration_ms = (time.time() - start_time) * 1000
+
+            # Log API call
+            if logger:
+                logger.log_api_call(model, messages, tool_defs, response, duration_ms)
 
             choice = response.choices[0]
             msg = choice.message
@@ -395,11 +498,9 @@ DVWA NOTES:
                 ]
             messages.append(assistant_msg)
 
-            # Print assistant thinking
             if msg.content and verbose:
                 print(f"  Thinking: {msg.content[:150]}...")
 
-            # No tool calls = done
             if not msg.tool_calls:
                 if verbose:
                     print(f"  [No tool calls - agent finished]")
@@ -419,14 +520,12 @@ DVWA NOTES:
 
                 result = await tools.execute(tool_name, tool_args)
 
-                # Add tool result
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
                     "content": result,
                 })
 
-                # Check for final answer
                 if tool_name == "submit_answer":
                     try:
                         data = json.loads(result)
@@ -446,24 +545,39 @@ DVWA NOTES:
 
         await tools.close()
 
+        # Save transcript and generate summary
+        if logger:
+            logger.save_transcript(messages)
+            if verbose:
+                print("\n[Generating summary report...]")
+            await logger.generate_summary(client, model)
+            logger.finalize()
+
         return {
             "challenge_id": challenge.get("id"),
             "success": success,
             "final_answer": final_answer,
             "tool_calls": tools.call_count,
             "messages": messages,
+            "run_dir": str(logger.get_run_path()) if logger else None,
         }
 
     except Exception as e:
         await tools.close()
         if verbose:
             print(f"\nERROR: {e}")
+
+        if logger:
+            logger.save_transcript(messages)
+            logger.finalize()
+
         return {
             "challenge_id": challenge.get("id"),
             "success": False,
             "error": str(e),
             "tool_calls": tools.call_count,
             "messages": messages,
+            "run_dir": str(logger.get_run_path()) if logger else None,
         }
 
 
@@ -474,23 +588,24 @@ DVWA NOTES:
 def list_challenges():
     """List available challenges"""
     print("\nAvailable Challenges:")
-    print("-" * 40)
+    print("-" * 50)
     for key, ch in CHALLENGES.items():
-        print(f"  {key:8} - {ch['category']:20} ({ch['difficulty']})")
+        cai_note = " (use --cai for more tools)" if key != "auto" else ""
+        print(f"  {key:8} - {ch['category']:20} ({ch['difficulty']}){cai_note}")
     print()
 
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="SkyHammer Attack CLI - Gemini-powered DVWA attacker",
+        description="SkyHammer Attack CLI - Gemini-powered security agent",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python attack.py                     # Run SQL injection challenge
-  python attack.py --challenge xss     # Run XSS challenge
-  python attack.py --challenge cmd     # Run command injection
-  python attack.py --list              # List all challenges
-  python attack.py --dvwa http://localhost:8080  # Custom DVWA URL
+  python attack.py                         # Run SQL injection
+  python attack.py --challenge xss         # Run XSS challenge
+  python attack.py --challenge sqli --cai  # Use CAI tools
+  python attack.py --list                  # List challenges
+  python attack.py --no-log                # Disable logging
         """
     )
 
@@ -505,7 +620,7 @@ Examples:
         "--dvwa",
         type=str,
         default="http://127.0.0.1",
-        help="DVWA URL"
+        help="Target URL"
     )
     parser.add_argument(
         "--max-turns",
@@ -521,7 +636,17 @@ Examples:
     parser.add_argument(
         "--quiet", "-q",
         action="store_true",
-        help="Quiet mode (less output)"
+        help="Quiet mode"
+    )
+    parser.add_argument(
+        "--cai",
+        action="store_true",
+        help="Enable CAI security tools (nmap, sqlmap, etc.)"
+    )
+    parser.add_argument(
+        "--no-log",
+        action="store_true",
+        help="Disable run logging"
     )
 
     args = parser.parse_args()
@@ -537,11 +662,16 @@ Examples:
     print("Gemini-Powered Security Agent")
     print("=" * 60)
 
+    if args.cai and not HAS_CAI:
+        print("[Warning] CAI bridge not found. Running without CAI tools.")
+
     result = await run_attack(
         challenge=challenge,
         dvwa_url=args.dvwa,
         max_turns=args.max_turns,
         verbose=not args.quiet,
+        use_cai=args.cai,
+        enable_logging=not args.no_log,
     )
 
     print("\n" + "=" * 60)
@@ -550,6 +680,8 @@ Examples:
     print(f"Challenge: {result.get('challenge_id')}")
     print(f"Success: {result.get('success')}")
     print(f"Tool Calls: {result.get('tool_calls')}")
+    if result.get('run_dir'):
+        print(f"Run Directory: {result['run_dir']}")
     if result.get('error'):
         print(f"Error: {result['error']}")
     print("=" * 60 + "\n")
