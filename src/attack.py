@@ -26,6 +26,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Load secrets
 try:
     from secretsConfig import GDM_API_KEY
@@ -33,21 +36,29 @@ try:
 except ImportError:
     pass
 
-# Load CAI Bridge
+# Load CAI Bridge (now in same directory)
 try:
-    from cai_bridge import CAIBridge
+    from src.cai_bridge import CAIBridge
     HAS_CAI = True
 except ImportError:
-    CAIBridge = None
-    HAS_CAI = False
+    try:
+        from cai_bridge import CAIBridge
+        HAS_CAI = True
+    except ImportError:
+        CAIBridge = None
+        HAS_CAI = False
 
 # Load Run Logger
 try:
-    from run_logger import RunLogger
+    from src.run_logger import RunLogger
     HAS_LOGGER = True
 except ImportError:
-    RunLogger = None
-    HAS_LOGGER = False
+    try:
+        from run_logger import RunLogger
+        HAS_LOGGER = True
+    except ImportError:
+        RunLogger = None
+        HAS_LOGGER = False
 
 from openai import AsyncOpenAI
 import httpx

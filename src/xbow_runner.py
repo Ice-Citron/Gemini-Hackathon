@@ -31,6 +31,9 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 try:
     from openai import AsyncOpenAI
     import httpx
@@ -47,9 +50,12 @@ except ImportError as e:
 
 # Import CAI bridge
 try:
-    from cai_bridge import CAIBridge
+    from src.cai_bridge import CAIBridge
 except ImportError:
-    CAIBridge = None
+    try:
+        from cai_bridge import CAIBridge
+    except ImportError:
+        CAIBridge = None
 
 # Import secrets
 try:
@@ -60,7 +66,7 @@ except ImportError:
 console = Console()
 
 # == CONFIGURATION ==
-XBOW_PATH = Path(__file__).parent / "xbow_benchmarks" / "benchmarks"
+XBOW_PATH = Path(__file__).parent.parent / "xbow_benchmarks" / "benchmarks"
 MODEL = "gemini-4-1-fast-reasoning"
 MAX_TURNS = 25
 TIMEOUT_PER_CHALLENGE = 300  # 5 minutes per challenge

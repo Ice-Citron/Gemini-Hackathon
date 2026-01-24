@@ -168,7 +168,7 @@ def attack_url():
     console.print(f"\n[red]Target: {url}[/]")
     console.print(f"[red]Vector: {challenge}[/]\n")
 
-    cmd = f'python attack.py --challenge {challenge} --dvwa "{url}"'
+    cmd = f'python src/attack.py --challenge {challenge} --dvwa "{url}"'
     run_process_with_logs(cmd, f"Attacking {url}")
 
     STATUS = "ATTACK COMPLETE"
@@ -183,7 +183,7 @@ def attack_synthetic():
     console.print("[dim]Generate a new vulnerable app and attack it[/]\n")
 
     # Run generator interactively
-    subprocess.run("python generator.py", shell=True)
+    subprocess.run("python src/generator.py", shell=True)
 
     # Find the latest synthetic file
     synthetic_files = sorted([f for f in os.listdir(".") if f.startswith("synthetic_") and f.endswith(".py")])
@@ -230,7 +230,7 @@ def attack_synthetic():
     time.sleep(2)  # Wait for Flask to start
 
     # Attack it
-    cmd = f"python attack.py --challenge {challenge} --dvwa http://127.0.0.1:5001"
+    cmd = f"python src/attack.py --challenge {challenge} --dvwa http://127.0.0.1:5001"
     run_process_with_logs(cmd, f"Attacking {latest_file}")
 
     # Cleanup
@@ -274,7 +274,7 @@ def run_patcher():
         STATUS = "IDLE"
         return
 
-    cmd = f'python patcher.py --source "{target}"'
+    cmd = f'python src/patcher.py --source "{target}"'
     run_process_with_logs(cmd, f"Patching {target}")
 
     STATUS = "PATCH COMPLETE"
@@ -343,7 +343,7 @@ def run_dockerizer():
     console.print("\n[bold blue]Auto-Dockerizer[/]")
     console.print("[dim]Generate Docker configs with Gemini[/]\n")
 
-    subprocess.run("python dockerizer.py", shell=True)
+    subprocess.run("python src/dockerizer.py", shell=True)
 
     STATUS = "DOCKER COMPLETE"
 
@@ -381,7 +381,7 @@ def run_auto_demo():
     ).ask()
 
     if confirmed:
-        os.system("python ui.py")
+        os.system("python src/ui.py")
 
 
 def show_status():

@@ -75,8 +75,10 @@ SKYHAMMER_MODE = False  # When True, enables security tools and attack/defense c
 WORKSPACE_DIR = os.getcwd()  # Sandbox - only allow operations within this directory
 AUTO_APPROVE = False  # Skip permission prompts if True
 INTERRUPT_REQUESTED = False  # Flag to interrupt agentic loop
+LISTENER_PAUSED = False  # Pause listener during prompts
 import difflib  # For diff highlighting
 import threading
+from datetime import datetime
 
 # Platform-specific imports for ESC key detection
 try:
@@ -86,6 +88,10 @@ try:
     HAS_TERMIOS = True
 except ImportError:
     HAS_TERMIOS = False  # Windows
+
+# Logging setup
+RUN_DIR = None  # Will be set when session starts
+LOG_FILE = None  # Combined log file for tool calls, API calls, and conversation
 
 # Tool definitions for function calling
 TOOLS = [
@@ -195,65 +201,106 @@ TOOLS = [
 ]
 
 
+def init_logging():
+    """Initialize logging directory for this session"""
+    global RUN_DIR, LOG_FILE
+
+    # Create runs directory if it doesn't exist
+    runs_base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs")
+    os.makedirs(runs_base, exist_ok=True)
+
+    # Create session directory
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    RUN_DIR = os.path.join(runs_base, f"gemini_code_{timestamp}")
+    os.makedirs(RUN_DIR, exist_ok=True)
+
+    # Create log file
+    LOG_FILE = os.path.join(RUN_DIR, "session.jsonl")
+
+    # Log session start
+    log_event("session_start", {
+        "timestamp": datetime.now().isoformat(),
+        "model": CURRENT_MODEL,
+        "workspace": WORKSPACE_DIR
+    })
+
+    if console:
+        console.print(f"[dim]Logging to: {RUN_DIR}[/]")
+
+
+def log_event(event_type: str, data: Dict[str, Any]):
+    """Log an event to the session log file"""
+    global LOG_FILE
+    if not LOG_FILE:
+        return
+
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "event": event_type,
+        **data
+    }
+
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        pass  # Don't crash on logging errors
+
+
+def log_tool_call(tool_name: str, args: Dict[str, Any], result: str, duration_ms: float = 0):
+    """Log a tool call"""
+    log_event("tool_call", {
+        "tool": tool_name,
+        "arguments": args,
+        "result_preview": result[:500] if result else "",
+        "result_length": len(result) if result else 0,
+        "duration_ms": duration_ms
+    })
+
+
+def log_api_call(model: str, messages_count: int, response_content: str, tool_calls: List[str] = None):
+    """Log an API call to Gemini"""
+    log_event("api_call", {
+        "model": model,
+        "messages_count": messages_count,
+        "response_preview": response_content[:500] if response_content else "",
+        "tool_calls": tool_calls or []
+    })
+
+
+def log_conversation(role: str, content: str):
+    """Log a conversation message"""
+    log_event("conversation", {
+        "role": role,
+        "content": content[:2000] if content else ""
+    })
+
+
+def pause_listener():
+    """Pause the ESC listener during prompts"""
+    global LISTENER_PAUSED
+    LISTENER_PAUSED = True
+
+
+def resume_listener():
+    """Resume the ESC listener after prompts"""
+    global LISTENER_PAUSED
+    LISTENER_PAUSED = False
+
+
 def start_interrupt_listener():
-    """Start background thread to listen for ESC key"""
+    """Start interrupt handling - uses Ctrl+C (SIGINT)"""
     global INTERRUPT_REQUESTED
     INTERRUPT_REQUESTED = False
-
-    if not HAS_TERMIOS:
-        # Windows - use msvcrt if available
-        try:
-            import msvcrt
-
-            def listener():
-                global INTERRUPT_REQUESTED
-                while not INTERRUPT_REQUESTED:
-                    if msvcrt.kbhit():
-                        key = msvcrt.getch()
-                        if key == b'\x1b':  # ESC key
-                            INTERRUPT_REQUESTED = True
-                            if console:
-                                console.print("\n[bold yellow]⚠ ESC pressed - interrupting...[/]")
-                            break
-
-            thread = threading.Thread(target=listener, daemon=True)
-            thread.start()
-            return thread
-        except ImportError:
-            return None  # No interrupt support
-
-    def listener():
-        global INTERRUPT_REQUESTED
-        old_settings = None
-        try:
-            old_settings = termios.tcgetattr(sys.stdin)
-            tty.setcbreak(sys.stdin.fileno())
-            while not INTERRUPT_REQUESTED:
-                if select.select([sys.stdin], [], [], 0.1)[0]:
-                    ch = sys.stdin.read(1)
-                    if ch == '\x1b':  # ESC key
-                        INTERRUPT_REQUESTED = True
-                        if console:
-                            console.print("\n[bold yellow]⚠ ESC pressed - interrupting after current tool...[/]")
-                        break
-        except:
-            pass
-        finally:
-            if old_settings:
-                try:
-                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-                except:
-                    pass
-
-    thread = threading.Thread(target=listener, daemon=True)
-    thread.start()
-    return thread
+    # No background thread needed - Ctrl+C works via KeyboardInterrupt
+    return None
 
 
 def stop_interrupt_listener():
     """Reset interrupt flag"""
-    global INTERRUPT_REQUESTED
+    global INTERRUPT_REQUESTED, LISTENER_PAUSED
     INTERRUPT_REQUESTED = False
+    LISTENER_PAUSED = False
 
 
 def show_diff(old_content: str, new_content: str, filename: str):
@@ -283,11 +330,11 @@ def show_diff(old_content: str, new_content: str, filename: str):
 
 
 def show_new_file_preview(content: str, filename: str):
-    """Show new file with cyan highlighting"""
+    """Show new file with green highlighting"""
     console.print(f"\n[bold]New file: {filename}[/]")
     lines = content.splitlines()
     for i, line in enumerate(lines[:25], 1):
-        console.print(f"[bright_cyan]+{i:3}| {line}[/]")
+        console.print(f"[bright_green]+{i:3}| {line}[/]")
     if len(lines) > 25:
         console.print(f"[dim]  ... +{len(lines) - 25} more lines[/]")
     console.print()
@@ -300,47 +347,54 @@ def ask_permission(tool_name: str, args: Dict[str, Any], preview_content: str = 
     if AUTO_APPROVE:
         return ("yes", None)
 
-    console.print(f"\n[bold yellow]⚡ {tool_name}[/]")
+    # Pause ESC listener during prompt
+    pause_listener()
 
-    # Show preview based on tool
-    if tool_name == "write_file":
-        path = args.get("path", "")
-        full_path = os.path.join(WORKSPACE_DIR, path) if not os.path.isabs(path) else path
-        content = args.get("content", "")
-        if os.path.exists(full_path):
-            with open(full_path, "r") as f:
-                old = f.read()
-            show_diff(old, content, path)
+    try:
+        console.print(f"\n[bold yellow]⚡ {tool_name}[/]")
+
+        # Show preview based on tool
+        if tool_name == "write_file":
+            path = args.get("path", "")
+            full_path = os.path.join(WORKSPACE_DIR, path) if not os.path.isabs(path) else path
+            content = args.get("content", "")
+            if os.path.exists(full_path):
+                with open(full_path, "r") as f:
+                    old = f.read()
+                show_diff(old, content, path)
+            else:
+                show_new_file_preview(content, path)
+
+        elif tool_name == "run_command":
+            console.print(f"[cyan]$ {args.get('command', '')}[/]")
+
         else:
-            show_new_file_preview(content, path)
+            console.print(f"[dim]{json.dumps(args)[:200]}[/]")
 
-    elif tool_name == "run_command":
-        console.print(f"[cyan]$ {args.get('command', '')}[/]")
-
-    else:
-        console.print(f"[dim]{json.dumps(args)[:200]}[/]")
-
-    # Ask
-    choice = questionary.select(
-        "Allow?",
-        choices=["Yes", "Yes to all (session)", "No (skip)", "Give feedback to Gemini"],
-        style=questionary.Style([('selected', 'fg:cyan bold')])
-    ).ask()
-
-    if not choice:
-        return ("no", None)
-    if "Yes to all" in choice:
-        AUTO_APPROVE = True
-        return ("yes", None)
-    if "Yes" == choice:
-        return ("yes", None)
-    if "feedback" in choice.lower():
-        feedback = questionary.text(
-            "What should Gemini do differently?",
-            style=questionary.Style([('answer', 'fg:yellow')])
+        # Ask
+        choice = questionary.select(
+            "Allow?",
+            choices=["Yes", "Yes to all (session)", "No (skip)", "Tell Gemini to do otherwise"],
+            style=questionary.Style([('selected', 'fg:cyan bold')])
         ).ask()
-        return ("feedback", feedback)
-    return ("no", None)
+
+        if not choice:
+            return ("no", None)
+        if "Yes to all" in choice:
+            AUTO_APPROVE = True
+            return ("yes", None)
+        if "Yes" == choice:
+            return ("yes", None)
+        if "otherwise" in choice.lower():
+            feedback = questionary.text(
+                "What should Gemini do differently?",
+                style=questionary.Style([('answer', 'fg:yellow')])
+            ).ask()
+            return ("feedback", feedback)
+        return ("no", None)
+    finally:
+        # Resume ESC listener
+        resume_listener()
 
 
 def is_safe_path(path: str) -> bool:
@@ -352,6 +406,8 @@ def is_safe_path(path: str) -> bool:
 def execute_tool(name: str, args: Dict[str, Any]) -> str:
     """Execute a tool and return the result"""
     global WORKSPACE_DIR
+    import time
+    start_time = time.time()
 
     try:
         if name == "read_file":
@@ -360,14 +416,20 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
             if not os.path.isabs(path):
                 path = os.path.join(WORKSPACE_DIR, path)
             if not is_safe_path(path):
-                return f"Error: Access denied - path outside workspace: {path}"
+                result = f"Error: Access denied - path outside workspace: {path}"
+                log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+                return result
             if os.path.exists(path):
                 with open(path, "r") as f:
                     content = f.read()
                 if console:
                     console.print(f"[green]✓ Read {len(content)} bytes from {path}[/]")
-                return f"Contents of {path}:\n```\n{content[:3000]}\n```"
-            return f"Error: File not found: {path}"
+                result = f"Contents of {path}:\n```\n{content[:3000]}\n```"
+                log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+                return result
+            result = f"Error: File not found: {path}"
+            log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+            return result
 
         elif name == "write_file":
             path = args.get("path", "")
@@ -375,21 +437,29 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
             # Ask permission with diff preview
             action, feedback = ask_permission("write_file", args)
             if action == "no":
-                return "Action skipped by user"
+                result = "Action skipped by user"
+                log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+                return result
             elif action == "feedback":
-                return f"USER FEEDBACK: {feedback}\n\nPlease try again with the user's feedback in mind."
+                result = f"USER FEEDBACK: {feedback}\n\nPlease try again with the user's feedback in mind."
+                log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+                return result
             # Make relative paths absolute within workspace
             if not os.path.isabs(path):
                 path = os.path.join(WORKSPACE_DIR, path)
             if not is_safe_path(path):
-                return f"Error: Access denied - path outside workspace: {path}"
+                result = f"Error: Access denied - path outside workspace: {path}"
+                log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+                return result
             # Create parent directories if needed
             os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
             with open(path, "w") as f:
                 f.write(content)
             if console:
                 console.print(f"[green]✓ Wrote {len(content)} bytes to {args.get('path', path)}[/]")
-            return f"SUCCESS: Wrote {len(content)} bytes to {args.get('path', path)}"
+            result = f"SUCCESS: Wrote {len(content)} bytes to {args.get('path', path)}"
+            log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+            return result
 
         elif name == "list_files":
             path = args.get("path", ".")
@@ -404,23 +474,31 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
             # Safety check
             dangerous = ["rm -rf /", "sudo rm", "mkfs", "> /dev", ":(){ :|:& };:"]
             if any(d in command for d in dangerous):
-                return "Error: Command blocked for safety"
+                result = "Error: Command blocked for safety"
+                log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+                return result
             # Ask permission
             action, feedback = ask_permission("run_command", args)
             if action == "no":
-                return "Action skipped by user"
+                result = "Action skipped by user"
+                log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+                return result
             elif action == "feedback":
-                return f"USER FEEDBACK: {feedback}\n\nPlease try a different approach based on the user's feedback."
+                result = f"USER FEEDBACK: {feedback}\n\nPlease try a different approach based on the user's feedback."
+                log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+                return result
             if console:
                 console.print(f"[yellow]$ {command}[/]")
-            result = subprocess.run(
+            proc_result = subprocess.run(
                 command, shell=True, capture_output=True, text=True,
                 timeout=120, cwd=WORKSPACE_DIR
             )
-            output = result.stdout + result.stderr
+            output = proc_result.stdout + proc_result.stderr
             if console:
-                console.print(f"[green]✓ Exit code: {result.returncode}[/]")
-            return f"Command output (exit {result.returncode}):\n```\n{output[:2000]}\n```"
+                console.print(f"[green]✓ Exit code: {proc_result.returncode}[/]")
+            result = f"Command output (exit {proc_result.returncode}):\n```\n{output[:2000]}\n```"
+            log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+            return result
 
         elif name == "search_code":
             pattern = args.get("pattern", "")
@@ -438,12 +516,12 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
             # Run attack.py in background
             if target.startswith("http"):
                 result = subprocess.run(
-                    f'python attack.py --dvwa "{target}" --challenge sqli --max-turns 5 --quiet',
+                    f'python src/attack.py --dvwa "{target}" --challenge sqli --max-turns 5 --quiet',
                     shell=True, capture_output=True, text=True, timeout=60
                 )
             else:
                 result = subprocess.run(
-                    f'python patcher.py --source "{target}" --vuln "Security Audit"',
+                    f'python src/patcher.py --source "{target}" --vuln "Security Audit"',
                     shell=True, capture_output=True, text=True, timeout=60
                 )
             return f"Security scan results:\n{result.stdout[:2000]}"
@@ -452,15 +530,19 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
             file_path = args.get("file_path", "")
             vuln = args.get("vulnerability", "Unknown")
             result = subprocess.run(
-                f'python patcher.py --source "{file_path}" --vuln "{vuln}"',
+                f'python src/patcher.py --source "{file_path}" --vuln "{vuln}"',
                 shell=True, capture_output=True, text=True, timeout=120
             )
             return f"Patch result:\n{result.stdout[:2000]}"
 
-        return f"Unknown tool: {name}"
+        result = f"Unknown tool: {name}"
+        log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+        return result
 
     except Exception as e:
-        return f"Tool error: {str(e)}"
+        result = f"Tool error: {str(e)}"
+        log_tool_call(name, args, result, (time.time() - start_time) * 1000)
+        return result
 
 
 def get_codebase_context() -> str:
@@ -500,19 +582,17 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
     else:
         active_tools = None
 
-    # Start ESC key listener
+    # Ctrl+C can be used to interrupt
     if console:
-        console.print("[dim](Press ESC to interrupt)[/]")
-    start_interrupt_listener()
+        console.print("[dim](Press Ctrl+C to interrupt)[/]")
 
     try:
         while iteration < max_iterations:
             iteration += 1
 
-            # Check for interrupt
+            # Check for interrupt flag
             if INTERRUPT_REQUESTED:
-                stop_interrupt_listener()
-                return "(Interrupted by user - press ESC again or /clear to reset)"
+                return "(Interrupted by user)"
 
             kwargs = {
                 "model": model_id,
@@ -527,14 +607,16 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
             response = client.chat.completions.create(**kwargs)
             msg = response.choices[0].message
 
+            # Log API call
+            tool_call_names = [tc.function.name for tc in msg.tool_calls] if msg.tool_calls else []
+            log_api_call(model_id, len(messages), msg.content or "", tool_call_names)
+
             # If no tool calls, we're done
             if not msg.tool_calls:
-                stop_interrupt_listener()
                 return msg.content or "(No response)"
 
             # Check for interrupt before processing tools
             if INTERRUPT_REQUESTED:
-                stop_interrupt_listener()
                 return "(Interrupted by user)"
 
             # Process tool calls
@@ -545,7 +627,6 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
             for tc in msg.tool_calls:
                 # Check for interrupt between tool calls
                 if INTERRUPT_REQUESTED:
-                    stop_interrupt_listener()
                     return "(Interrupted by user mid-execution)"
 
                 tool_name = tc.function.name
@@ -579,11 +660,11 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
             if msg.content and console:
                 console.print(f"[dim italic]{msg.content[:200]}...[/]" if len(msg.content or "") > 200 else f"[dim italic]{msg.content}[/]")
 
-        stop_interrupt_listener()
         return "(Max iterations reached - use /clear to reset)"
 
-    finally:
-        stop_interrupt_listener()
+    except KeyboardInterrupt:
+        console.print("\n[bold yellow]⚠ Interrupted by Ctrl+C[/]")
+        return "(Interrupted by user)"
 
 
 def interactive_mode():
@@ -593,6 +674,9 @@ def interactive_mode():
     if not console:
         print("Rich library required for interactive mode")
         return
+
+    # Initialize logging
+    init_logging()
 
     console.print("\n[bold cyan]╔══════════════════════════════════════════════════════════╗[/]")
     console.print("[bold cyan]║             Gemini Code - Powered by GDM                    ║[/]")
@@ -731,7 +815,7 @@ REMEMBER: Keep going until task is complete, then summarize!"""
   !uvicorn app:app --port 8000
 
 [bold]Interrupt:[/]
-  Press ESC       - Stop Gemini mid-workflow
+  Press Ctrl+C    - Stop Gemini mid-workflow
 
 [bold]Permission Prompts:[/]
   When Gemini wants to write files or run commands:
@@ -893,6 +977,7 @@ REMEMBER: Keep going until task is complete, then summarize!"""
 
             # Add user message
             messages.append({"role": "user", "content": user_input})
+            log_conversation("user", user_input)
 
             # Get response
             console.print()
@@ -910,6 +995,7 @@ REMEMBER: Keep going until task is complete, then summarize!"""
                     console.print(Panel(response, border_style="green", title="Gemini"))
 
                 messages.append({"role": "assistant", "content": response})
+                log_conversation("assistant", response)
 
             except Exception as e:
                 console.print(f"[red]Error: {e}[/]")
@@ -959,9 +1045,9 @@ def security_mode():
 
     # Use the attack/patcher tools
     if target.startswith("http"):
-        subprocess.run(f'python attack.py --dvwa "{target}" --challenge sqli', shell=True)
+        subprocess.run(f'python src/attack.py --dvwa "{target}" --challenge sqli', shell=True)
     else:
-        subprocess.run(f'python patcher.py --source "{target}"', shell=True)
+        subprocess.run(f'python src/patcher.py --source "{target}"', shell=True)
 
 
 def main():
