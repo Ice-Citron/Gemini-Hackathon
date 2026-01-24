@@ -1,5 +1,4 @@
 from flask import Flask, request, make_response, redirect
-from markupsafe import escape
 
 app = Flask(__name__)
 app.secret_key = "hackathon_secret"
@@ -31,16 +30,14 @@ def sqli():
     if request.cookies.get('security') != 'low': return redirect('/login.php')
 
     user_id = request.args.get('id', '')
-    response = f"User ID: {escape(user_id)}<br>"
+    response = f"User ID: {user_id}<br>"
 
-    # PATCHED: Fixed SQL Injection (UNION-based) by removing vulnerable keyword detection that leaked data and using strict numeric input validation (int conversion) to ensure only valid numeric IDs are looked up in the mock DB. Also escaped all user-controlled output to prevent XSS.
-    try:
-        uid = str(int(user_id))
-        if uid in USERS:
-            u = USERS[uid]
-            response += f"ID: {escape(uid)}<br>First: {escape(u['first'])}<br>Surname: {escape(u['last'])}"
-    except ValueError:
-        pass  # Invalid ID format, no user info shown
+    # Simulate vulnerability
+    if "' OR '1'='1" in user_id or "UNION" in user_id.upper():
+        response += "ID: 1 | First: admin | Last: admin<br>ID: 2 | First: Gordon | Last: Brown"
+    elif user_id in USERS:
+        u = USERS[user_id]
+        response += f"ID: {user_id}<br>First: {u['first']}<br>Surname: {u['last']}"
 
     return response
 

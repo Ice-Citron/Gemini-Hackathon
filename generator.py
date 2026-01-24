@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
 """
-AthenaGuard Synthetic Vulnerability Generator
+AthenaGuard Synthetic Vulnerability Generator v2.0
 
 Uses Gemini to generate new vulnerable Flask applications on-the-fly.
-This proves the system can handle unknown/unseen vulnerabilities.
+Supports: SQL Injection, Command Injection, XSS, LFI, Path Traversal, RCE
 
 Usage:
-    python generator.py "SQL Injection"
-    python generator.py "Command Injection"
-    python generator.py "Reflected XSS"
+    python generator.py                    # Interactive menu
+    python generator.py "SQL Injection"    # Direct generation
 """
 
 import os
 import sys
-import time
 from openai import OpenAI
 
 try:
+    import questionary
     from rich.console import Console
     from rich.panel import Panel
     from rich.syntax import Syntax
     console = Console()
+    HAS_RICH = True
 except ImportError:
     console = None
+    HAS_RICH = False
 
 # Load API Key
 try:
@@ -36,10 +37,44 @@ if not GDM_API_KEY:
 
 client = OpenAI(api_key=GDM_API_KEY, base_url="https://api.x.ai/v1")
 
+# Vulnerability templates for better generation
+VULN_TEMPLATES = {
+    "SQL Injection": {
+        "endpoint": "/vulnerabilities/sqli/",
+        "param": "id",
+        "description": "Use sqlite3 in-memory database with 'users' table containing admin/password. The endpoint should use string formatting to build SQL query (vulnerable to UNION injection)."
+    },
+    "Command Injection": {
+        "endpoint": "/vulnerabilities/exec/",
+        "param": "ip",
+        "description": "Endpoint accepts IP for ping command. Use os.system() or subprocess with shell=True WITHOUT sanitization. Should be exploitable with ; or | or &&."
+    },
+    "Reflected XSS": {
+        "endpoint": "/vulnerabilities/xss_r/",
+        "param": "name",
+        "description": "Reflect the 'name' parameter directly in HTML response WITHOUT escaping. Should allow <script>alert(1)</script> to execute."
+    },
+    "LFI (File Inclusion)": {
+        "endpoint": "/vulnerabilities/fi/",
+        "param": "page",
+        "description": "Open and read files based on 'page' parameter. Should be exploitable with ../../../etc/passwd to read system files."
+    },
+    "Path Traversal": {
+        "endpoint": "/vulnerabilities/traversal/",
+        "param": "file",
+        "description": "Serve files from a 'uploads' directory but vulnerable to ../ traversal to access files outside the directory."
+    },
+    "SSTI (Template Injection)": {
+        "endpoint": "/vulnerabilities/ssti/",
+        "param": "name",
+        "description": "Use Jinja2 render_template_string with user input. Should be exploitable with {{7*7}} or {{config}}."
+    }
+}
+
 
 def log(msg, style="white"):
     """Print with optional rich formatting"""
-    if console:
+    if HAS_RICH and console:
         console.print(f"[{style}]{msg}[/]")
     else:
         print(msg)
@@ -48,56 +83,47 @@ def log(msg, style="white"):
 def generate_app(vuln_type: str) -> str:
     """
     Generate a synthetic vulnerable Flask application.
-
-    Args:
-        vuln_type: Type of vulnerability (e.g., "SQL Injection", "XSS")
-
-    Returns:
-        Path to the generated file
     """
     log(f"\n{'='*60}", "cyan")
-    log("AthenaGuard Synthetic Generator", "bold cyan")
+    log("AthenaGuard Synthetic Generator v2.0", "bold cyan")
     log(f"{'='*60}", "cyan")
 
     log(f"\n[+] Vulnerability Type: {vuln_type}", "yellow")
-    log("[+] Generating with Gemini-4...", "yellow")
+
+    # Get template info
+    template = VULN_TEMPLATES.get(vuln_type, {
+        "endpoint": "/vulnerable/",
+        "param": "input",
+        "description": f"Create a {vuln_type} vulnerability that is exploitable."
+    })
+
+    log(f"[+] Endpoint: {template['endpoint']}", "dim")
+    log(f"[+] Parameter: {template['param']}", "dim")
+    log("[+] Generating with Gemini...", "yellow")
 
     prompt = f"""Write a complete, single-file Python Flask application.
 
 REQUIREMENTS:
 1. Run on port 5001: app.run(host='0.0.0.0', port=5001, debug=True)
 2. Must have a REAL, EXPLOITABLE vulnerability of type: {vuln_type}
-3. The vulnerability must be exploitable via HTTP GET or POST parameters
-4. Include a login route at /login.php that always succeeds (for compatibility)
-5. Include a home route at / that shows a welcome message
-6. NO markdown formatting. NO explanation. ONLY raw Python code.
-7. Import all necessary modules at the top.
+3. NO markdown formatting. NO explanation. ONLY raw Python code.
+4. Import all necessary modules at the top.
 
-VULNERABILITY SPECIFICS:
-- If SQL Injection:
-  * Create an in-memory SQLite database with a 'users' table
-  * Populate with test data (admin/password, guest/guest123)
-  * Create /vulnerabilities/sqli/ endpoint that takes 'id' parameter
-  * Use string formatting (f-string or %) to build query - THIS IS THE VULNERABILITY
-  * Return user data in HTML format
+ROUTES TO INCLUDE:
+- GET / : Welcome page with link to vulnerable endpoint
+- GET/POST /login.php : Simple login that always succeeds, sets cookies (PHPSESSID, security=low)
+- GET/POST {template['endpoint']} : The vulnerable endpoint using parameter '{template['param']}'
 
-- If Command Injection:
-  * Create /vulnerabilities/exec/ endpoint that takes 'ip' parameter via POST
-  * Use os.system() or subprocess with shell=True - THIS IS THE VULNERABILITY
-  * Intended for "ping" but exploitable with ; or |
+VULNERABILITY DETAILS:
+{template['description']}
 
-- If Reflected XSS:
-  * Create /vulnerabilities/xss_r/ endpoint that takes 'name' parameter
-  * Reflect the parameter directly in HTML without escaping - THIS IS THE VULNERABILITY
-  * Return HTML that includes the user input
+IMPORTANT:
+- The vulnerability must be REAL and EXPLOITABLE, not simulated
+- Include sample data if needed (like a users table for SQLi)
+- Make sure the app actually runs without errors
 
-- If Path Traversal:
-  * Create /vulnerabilities/fi/ endpoint that takes 'page' parameter
-  * Use open() with user input to read files - THIS IS THE VULNERABILITY
-  * Allow reading files outside web directory with ../
-
-OUTPUT FORMAT:
-Just the Python code, starting with imports. No markdown, no explanations.
+OUTPUT:
+Just the Python code, starting with 'from flask import'. No markdown, no explanations.
 """
 
     try:
@@ -106,7 +132,7 @@ Just the Python code, starting with imports. No markdown, no explanations.
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a Python code generator for security testing. Output only valid Python code, no markdown fences or explanations."
+                    "content": "You are a Python code generator for security testing. Output only valid Python code. No markdown fences, no explanations, just code."
                 },
                 {"role": "user", "content": prompt}
             ],
@@ -129,8 +155,8 @@ Just the Python code, starting with imports. No markdown, no explanations.
 
         code = code.strip()
 
-        # Generate filename based on vuln type
-        vuln_slug = vuln_type.lower().replace(" ", "_").replace("-", "_")
+        # Generate filename
+        vuln_slug = vuln_type.lower().replace(" ", "_").replace("-", "_").replace("(", "").replace(")", "")
         vuln_slug = ''.join(c for c in vuln_slug if c.isalnum() or c == '_')
         filename = f"synthetic_{vuln_slug}.py"
 
@@ -138,14 +164,15 @@ Just the Python code, starting with imports. No markdown, no explanations.
         with open(filename, "w") as f:
             f.write(code)
 
-        log(f"\n[+] Generated: {filename}", "green")
+        log(f"\n[+] Generated: {filename}", "bold green")
         log(f"[+] Lines: {len(code.splitlines())}", "green")
         log(f"[+] Port: 5001", "green")
+        log(f"[+] Endpoint: {template['endpoint']}?{template['param']}=", "green")
 
         # Show preview
-        if console:
+        if HAS_RICH and console:
             log("\n[Preview]", "dim")
-            preview = code[:500] + "..." if len(code) > 500 else code
+            preview = code[:600] + "\n..." if len(code) > 600 else code
             syntax = Syntax(preview, "python", theme="monokai", line_numbers=True)
             console.print(Panel(syntax, title="Generated Code", border_style="green"))
 
@@ -153,7 +180,7 @@ Just the Python code, starting with imports. No markdown, no explanations.
         log("NEXT STEPS:", "bold cyan")
         log(f"{'='*60}", "cyan")
         log(f"1. Start the app:  python {filename}", "white")
-        log(f"2. Attack it:      python attack.py --dvwa http://127.0.0.1:5001", "white")
+        log(f"2. Attack it:      python attack.py --dvwa http://127.0.0.1:5001 --challenge sqli", "white")
         log(f"3. Patch it:       python patcher.py --source {filename}", "white")
         log(f"{'='*60}\n", "cyan")
 
@@ -164,14 +191,35 @@ Just the Python code, starting with imports. No markdown, no explanations.
         return None
 
 
+def interactive_menu():
+    """Show interactive menu for vulnerability selection"""
+    if not HAS_RICH:
+        print("Install 'questionary' for interactive menu: pip install questionary")
+        return generate_app("SQL Injection")
+
+    log("\n[bold cyan]Synthetic Vulnerability Generator[/]", "bold cyan")
+    log("[dim]Create new vulnerable apps for testing[/]\n", "dim")
+
+    choice = questionary.select(
+        "Choose vulnerability type to generate:",
+        choices=list(VULN_TEMPLATES.keys()),
+        style=questionary.Style([
+            ('selected', 'fg:magenta bold'),
+            ('pointer', 'fg:magenta bold'),
+        ])
+    ).ask()
+
+    if choice:
+        return generate_app(choice)
+    return None
+
+
 def main():
     if len(sys.argv) > 1:
         vuln_type = " ".join(sys.argv[1:])
+        generate_app(vuln_type)
     else:
-        # Default
-        vuln_type = "SQL Injection"
-
-    generate_app(vuln_type)
+        interactive_menu()
 
 
 if __name__ == "__main__":
