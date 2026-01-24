@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-AthenaGuard Command Center v2.2
+AthenaGuard Command Center v3.0
 
 Interactive CLI for autonomous security testing and remediation.
-Features arrow-key menus, synthetic app generation, and live attack visualization.
+Features:
+- Attack any URL
+- Generate synthetic vulnerable apps
+- Auto-patch with Gemini
+- Auto-dockerize repos
+- Full demo mode
 
 Usage:
     python cli.py
@@ -26,7 +31,6 @@ try:
     from rich.live import Live
     from rich.table import Table
     from rich import box
-    from rich.syntax import Syntax
     from rich.text import Text
 except ImportError as e:
     print(f"Missing dependency: {e}")
@@ -36,11 +40,7 @@ except ImportError as e:
 console = Console()
 
 # == GLOBAL STATE ==
-TARGET_HOST = "http://127.0.0.1:80"
-TARGET_FILE = "mock_dvwa.py"
-SECURE_FILE = "mock_dvwa_secure.py"
 STATUS = "IDLE"
-LAST_ATTACK_RESULT = None
 SYNTHETIC_SERVER = None
 
 
@@ -55,13 +55,13 @@ def render_header():
     if "ATTACK" in STATUS or "COMPROMISED" in STATUS:
         style = "bold red"
         icon = "🔴"
-    elif "PATCH" in STATUS or "GENERATING" in STATUS:
+    elif "PATCH" in STATUS:
         style = "bold yellow"
-        icon = "🟡"
+        icon = "🛡️"
     elif "SECURE" in STATUS or "BLOCKED" in STATUS:
         style = "bold green"
         icon = "🟢"
-    elif "GENERATE" in STATUS:
+    elif "GENERATE" in STATUS or "DOCKER" in STATUS:
         style = "bold magenta"
         icon = "🧪"
     else:
@@ -70,19 +70,26 @@ def render_header():
 
     grid.add_row(
         Text("AthenaGuard", style="bold cyan"),
-        Text("Command Center v2.2", style="dim"),
+        Text("Command Center v3.0", style="dim"),
         Text(f"{icon} {STATUS}", style=style)
     )
     return Panel(grid, style="white on black", box=box.DOUBLE)
 
 
-def show_logs(process, title="Running Process"):
+def run_process_with_logs(cmd, title="Running..."):
     """Stream subprocess output with live updates"""
     logs = []
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
         Layout(name="body", ratio=1)
+    )
+
+    process = subprocess.Popen(
+        cmd, shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True
     )
 
     with Live(layout, refresh_per_second=8, console=console):
@@ -99,12 +106,14 @@ def show_logs(process, title="Running Process"):
                     if "Tool:" in clean:
                         logs.append(f"[blue]{clean[:80]}[/]")
                     elif "Success: True" in clean:
-                        logs.append(f"[bold red]>>> {clean} <<<[/]")
+                        logs.append(f"[bold red]>>> EXPLOITED: {clean} <<<[/]")
                     elif "Success: False" in clean:
-                        logs.append(f"[bold green]>>> {clean} <<<[/]")
+                        logs.append(f"[bold green]>>> BLOCKED: {clean} <<<[/]")
                     elif "Error" in clean or "error" in clean:
                         logs.append(f"[red]{clean}[/]")
-                    elif "PATCH" in clean or "Generating" in clean:
+                    elif "PATCH" in clean or "[+]" in clean:
+                        logs.append(f"[green]{clean}[/]")
+                    elif "Generating" in clean or "Generated" in clean:
                         logs.append(f"[magenta]{clean}[/]")
                     else:
                         logs.append(clean)
@@ -118,25 +127,35 @@ def show_logs(process, title="Running Process"):
     return process.poll()
 
 
-def run_generator():
-    """Generate a synthetic vulnerable application"""
+def attack_url():
+    """Attack any URL target"""
     global STATUS
-    STATUS = "GENERATING APP"
+    STATUS = "ATTACKING EXTERNAL TARGET"
 
-    console.print("\n[bold magenta]Synthetic Vulnerability Generator[/]")
-    console.print("[dim]Creates a new vulnerable Flask app using Gemini[/]\n")
+    console.print("\n[bold red]Attack External Target[/]")
+    console.print("[dim]Attack any web application by URL[/]\n")
+
+    url = questionary.text(
+        "Enter target URL:",
+        default="http://127.0.0.1:80",
+        style=questionary.Style([('answer', 'fg:red bold')])
+    ).ask()
+
+    if not url:
+        STATUS = "IDLE"
+        return
 
     vuln = questionary.select(
-        "Select vulnerability type to generate:",
+        "Select attack vector:",
         choices=[
-            "SQL Injection",
-            "Command Injection",
-            "Reflected XSS",
-            "Path Traversal"
+            "sqli - SQL Injection",
+            "xss - Cross-Site Scripting",
+            "cmd - Command Injection",
+            "lfi - Local File Inclusion"
         ],
         style=questionary.Style([
-            ('selected', 'fg:cyan bold'),
-            ('pointer', 'fg:cyan bold'),
+            ('selected', 'fg:red bold'),
+            ('pointer', 'fg:red bold'),
         ])
     ).ask()
 
@@ -144,116 +163,95 @@ def run_generator():
         STATUS = "IDLE"
         return
 
-    console.print(f"\n[cyan]Generating {vuln} challenge...[/]")
+    challenge = vuln.split(" - ")[0]
 
-    cmd = f'python generator.py "{vuln}"'
-    process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    show_logs(process, title=f"Gemini Synthetic Generator ({vuln})")
+    console.print(f"\n[red]Target: {url}[/]")
+    console.print(f"[red]Vector: {challenge}[/]\n")
 
-    STATUS = "APP GENERATED"
-    console.print("[green]Synthetic app created! Select it in Attack menu.[/]")
+    cmd = f'python attack.py --challenge {challenge} --dvwa "{url}"'
+    run_process_with_logs(cmd, f"Attacking {url}")
+
+    STATUS = "ATTACK COMPLETE"
 
 
-def run_attack_module():
-    """Run the Gemini attack agent"""
-    global STATUS, LAST_ATTACK_RESULT, SYNTHETIC_SERVER
-    STATUS = "RED TEAM ATTACK"
+def attack_synthetic():
+    """Generate and attack a synthetic app"""
+    global STATUS, SYNTHETIC_SERVER
+    STATUS = "GENERATING CHALLENGE"
 
-    console.print("\n[bold red]Red Team Attack Module[/]")
-    console.print("[dim]Gemini-powered autonomous exploitation[/]\n")
+    console.print("\n[bold magenta]Synthetic Challenge[/]")
+    console.print("[dim]Generate a new vulnerable app and attack it[/]\n")
 
-    # Find available targets
-    targets = []
-    if os.path.exists("mock_dvwa.py"):
-        targets.append("mock_dvwa.py (Port 80 - requires sudo)")
+    # Run generator interactively
+    subprocess.run("python generator.py", shell=True)
 
-    # Find synthetic apps
-    for f in os.listdir("."):
-        if f.startswith("synthetic_") and f.endswith(".py"):
-            targets.append(f"{f} (Port 5001 - auto-start)")
+    # Find the latest synthetic file
+    synthetic_files = sorted([f for f in os.listdir(".") if f.startswith("synthetic_") and f.endswith(".py")])
 
-    if not targets:
-        console.print("[red]No target applications found![/]")
+    if not synthetic_files:
+        console.print("[red]No synthetic app generated![/]")
         STATUS = "IDLE"
         return
 
-    target_choice = questionary.select(
-        "Select target application:",
-        choices=targets,
-        style=questionary.Style([
-            ('selected', 'fg:red bold'),
-            ('pointer', 'fg:red bold'),
-        ])
+    latest_file = synthetic_files[-1]
+
+    # Ask if user wants to attack it
+    attack_now = questionary.confirm(
+        f"Attack {latest_file} now?",
+        default=True
     ).ask()
 
-    if not target_choice:
+    if not attack_now:
         STATUS = "IDLE"
         return
 
-    target_app = target_choice.split(" ")[0]
+    STATUS = "ATTACKING SYNTHETIC"
 
-    # Determine port and challenge type
-    if "synthetic" in target_app:
-        port = "5001"
-        # Guess challenge from filename
-        if "sql" in target_app.lower():
-            challenge = "sqli"
-        elif "command" in target_app.lower():
-            challenge = "cmd"
-        elif "xss" in target_app.lower():
-            challenge = "xss"
-        else:
-            challenge = "sqli"
-
-        # Start synthetic server
-        console.print(f"[yellow]Starting {target_app} on port {port}...[/]")
-        SYNTHETIC_SERVER = subprocess.Popen(
-            ["python", target_app],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        time.sleep(2)  # Wait for Flask
+    # Determine challenge type from filename
+    if "sql" in latest_file.lower():
+        challenge = "sqli"
+    elif "command" in latest_file.lower():
+        challenge = "cmd"
+    elif "xss" in latest_file.lower():
+        challenge = "xss"
+    elif "lfi" in latest_file.lower() or "file" in latest_file.lower():
+        challenge = "lfi"
     else:
-        port = "80"
-        # Let user pick challenge for mock_dvwa
-        challenge = questionary.select(
-            "Select attack vector:",
-            choices=["sqli (SQL Injection)", "xss (Cross-Site Scripting)", "cmd (Command Injection)"]
-        ).ask()
-        challenge = challenge.split(" ")[0] if challenge else "sqli"
+        challenge = "sqli"
 
-    target_url = f"http://127.0.0.1:{port}"
+    console.print(f"\n[yellow]Starting {latest_file} on port 5001...[/]")
 
-    console.print(f"\n[red]Targeting: {target_url}[/]")
-    console.print(f"[red]Challenge: {challenge}[/]\n")
+    # Start the synthetic server
+    SYNTHETIC_SERVER = subprocess.Popen(
+        ["python", latest_file],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    time.sleep(2)  # Wait for Flask to start
 
-    # Run attack
-    cmd = f"python attack.py --challenge {challenge} --dvwa {target_url}"
-    process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    exit_code = show_logs(process, title=f"Attacking {target_app}")
+    # Attack it
+    cmd = f"python attack.py --challenge {challenge} --dvwa http://127.0.0.1:5001"
+    run_process_with_logs(cmd, f"Attacking {latest_file}")
 
-    # Cleanup synthetic server
+    # Cleanup
     if SYNTHETIC_SERVER:
         SYNTHETIC_SERVER.terminate()
         SYNTHETIC_SERVER = None
         console.print("[yellow]Synthetic server stopped.[/]")
 
-    # Determine result
     STATUS = "ATTACK COMPLETE"
 
 
-def run_patch_module():
-    """Run the Gemini patcher"""
+def run_patcher():
+    """Patch a vulnerable file"""
     global STATUS
     STATUS = "AI PATCHING"
 
-    console.print("\n[bold yellow]AI Patcher Module[/]")
-    console.print("[dim]Gemini-powered vulnerability remediation[/]\n")
+    console.print("\n[bold yellow]AI Patcher[/]")
+    console.print("[dim]Fix vulnerabilities with Gemini[/]\n")
 
     # Find patchable files
-    files = []
-    if os.path.exists("mock_dvwa.py"):
-        files.append("mock_dvwa.py")
+    files = ["mock_dvwa.py"]
     for f in os.listdir("."):
         if f.startswith("synthetic_") and f.endswith(".py") and "_secure" not in f:
             files.append(f)
@@ -276,22 +274,19 @@ def run_patch_module():
         STATUS = "IDLE"
         return
 
-    console.print(f"\n[yellow]Analyzing {target} with Gemini...[/]\n")
-
     cmd = f'python patcher.py --source "{target}"'
-    process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    show_logs(process, title=f"Patching {target}")
+    run_process_with_logs(cmd, f"Patching {target}")
 
-    STATUS = "PATCH READY"
+    STATUS = "PATCH COMPLETE"
 
 
 def run_deploy():
-    """Deploy the secure version"""
+    """Deploy a patched version"""
     global STATUS
     STATUS = "DEPLOYING"
 
-    console.print("\n[bold green]Deploy Module[/]")
-    console.print("[dim]Hot-swap vulnerable code with patched version[/]\n")
+    console.print("\n[bold green]Deploy Patch[/]")
+    console.print("[dim]Hot-swap vulnerable code with secure version[/]\n")
 
     # Find secure versions
     secure_files = []
@@ -328,12 +323,10 @@ def run_deploy():
     ).ask()
 
     if confirmed:
-        # Backup
         backup = f"{original}.bak"
         subprocess.run(f'cp "{original}" "{backup}"', shell=True)
-        console.print(f"[dim]Backup saved: {backup}[/]")
+        console.print(f"[dim]Backup: {backup}[/]")
 
-        # Swap
         subprocess.run(f'cp "{secure}" "{original}"', shell=True)
         console.print(f"[green]Deployed! {original} is now secure.[/]")
 
@@ -342,14 +335,25 @@ def run_deploy():
         STATUS = "IDLE"
 
 
+def run_dockerizer():
+    """Auto-generate Docker configs"""
+    global STATUS
+    STATUS = "DOCKERIZING"
+
+    console.print("\n[bold blue]Auto-Dockerizer[/]")
+    console.print("[dim]Generate Docker configs with Gemini[/]\n")
+
+    subprocess.run("python dockerizer.py", shell=True)
+
+    STATUS = "DOCKER COMPLETE"
+
+
 def run_reset():
     """Reset to vulnerable state"""
     global STATUS
 
-    console.print("\n[bold yellow]Reset Module[/]")
-    console.print("[dim]Restore vulnerable versions for testing[/]\n")
+    console.print("\n[bold yellow]Reset Environment[/]")
 
-    # Find backups
     backups = [f for f in os.listdir(".") if f.endswith(".bak")]
 
     if not backups:
@@ -362,30 +366,26 @@ def run_reset():
         console.print(f"[yellow]Restored: {original}[/]")
 
     STATUS = "VULNERABLE (RESET)"
-    console.print("\n[red]System restored to VULNERABLE state.[/]")
 
 
 def run_auto_demo():
-    """Run the full automated demo"""
+    """Run the automated demo"""
     global STATUS
 
-    console.print("\n[bold cyan]Automated Demo Mode[/]")
-    console.print("[dim]Runs the full attack -> patch -> verify loop[/]\n")
+    console.print("\n[bold cyan]Automated Demo[/]")
+    console.print("[dim]Full attack -> patch -> verify loop[/]\n")
 
     confirmed = questionary.confirm(
-        "Run full automated demo? (Make sure mock_dvwa.py is running on port 80)",
+        "Run automated demo? (Requires mock_dvwa.py running on port 80)",
         default=True
     ).ask()
 
-    if not confirmed:
-        return
-
-    # Run the ui.py demo
-    os.system("python ui.py")
+    if confirmed:
+        os.system("python ui.py")
 
 
 def show_status():
-    """Show current system status"""
+    """Show system status"""
     console.print("\n")
     console.print(render_header())
 
@@ -395,13 +395,20 @@ def show_status():
 
     # Check files
     table.add_row("mock_dvwa.py", "✓ Found" if os.path.exists("mock_dvwa.py") else "✗ Missing")
-    table.add_row("mock_dvwa_secure.py", "✓ Found" if os.path.exists("mock_dvwa_secure.py") else "✗ Missing")
+    table.add_row("mock_dvwa_secure.py", "✓ Found" if os.path.exists("mock_dvwa_secure.py") else "○ Not generated")
 
     # Count synthetic apps
-    synthetic = [f for f in os.listdir(".") if f.startswith("synthetic_") and f.endswith(".py")]
+    synthetic = [f for f in os.listdir(".") if f.startswith("synthetic_") and f.endswith(".py") and "_secure" not in f]
     table.add_row("Synthetic Apps", f"{len(synthetic)} generated")
 
-    # Check dependencies
+    # Check patched versions
+    patched = [f for f in os.listdir(".") if "_secure.py" in f]
+    table.add_row("Patched Versions", f"{len(patched)} available")
+
+    # Check Docker
+    table.add_row("Dockerfile", "✓ Found" if os.path.exists("Dockerfile") else "○ Not generated")
+
+    # Check API
     table.add_row("Gemini API", "✓ Configured" if os.path.exists("secretsConfig.py") else "✗ Missing")
 
     console.print(table)
@@ -412,29 +419,26 @@ def main_menu():
     global STATUS
 
     while True:
-        # Clear screen
         os.system('cls' if os.name == 'nt' else 'clear')
-
-        # Show header
         console.print(render_header())
         console.print()
 
         choice = questionary.select(
             "Select operation:",
             choices=[
-                "1. 🧪 Generate Synthetic Challenge",
-                "2. 🔴 Run Red Team Attack",
-                "3. 🔵 Run AI Patcher (Fix Vulnerabilities)",
-                "4. 🚀 Deploy Patch (Hot-Swap)",
-                "5. ♻️  Reset Environment",
-                "6. 🎬 Run Automated Demo",
-                "7. 📊 Show Status",
-                "8. 🚪 Exit"
+                "1. ⚔️  Attack: Target URL (Paste Link)",
+                "2. 🧪 Attack: Synthetic Challenge (Generate & Attack)",
+                "3. 🛡️  Defense: AI Patcher (Fix Code)",
+                "4. 🚀 Deploy: Hot-Swap Patch",
+                "5. 🐳 DevOps: Auto-Dockerize",
+                "6. ♻️  Reset: Restore Vulnerable State",
+                "7. 🎬 Demo: Run Automated Loop",
+                "8. 📊 Status: Show System Info",
+                "9. 🚪 Exit"
             ],
             style=questionary.Style([
                 ('selected', 'fg:cyan bold'),
                 ('pointer', 'fg:cyan bold'),
-                ('highlighted', 'fg:cyan'),
             ])
         ).ask()
 
@@ -442,20 +446,22 @@ def main_menu():
             continue
 
         if "1." in choice:
-            run_generator()
+            attack_url()
         elif "2." in choice:
-            run_attack_module()
+            attack_synthetic()
         elif "3." in choice:
-            run_patch_module()
+            run_patcher()
         elif "4." in choice:
             run_deploy()
         elif "5." in choice:
-            run_reset()
+            run_dockerizer()
         elif "6." in choice:
-            run_auto_demo()
+            run_reset()
         elif "7." in choice:
-            show_status()
+            run_auto_demo()
         elif "8." in choice:
+            show_status()
+        elif "9." in choice:
             console.print("\n[cyan]Goodbye![/]")
             sys.exit(0)
 
@@ -471,10 +477,9 @@ def main():
     try:
         main_menu()
     except KeyboardInterrupt:
-        # Cleanup
         if SYNTHETIC_SERVER:
             SYNTHETIC_SERVER.terminate()
-        console.print("\n[yellow]Interrupted. Cleaning up...[/]")
+        console.print("\n[yellow]Interrupted. Exiting...[/]")
         sys.exit(0)
 
 
