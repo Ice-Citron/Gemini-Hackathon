@@ -19,7 +19,7 @@ import json
 
 
 # DVWA target URL (can be overridden via environment)
-DVWA_URL = os.environ.get("DVWA_URL", "http://31.97.117.123")
+DVWA_URL = os.environ.get("DVWA_URL", "http://127.0.0.1")
 
 
 class ToolDefinition(BaseModel):

@@ -64,7 +64,7 @@ class TrainingConfig:
 
     # === Target Configuration ===
     dvwa_url: str = field(default_factory=lambda: os.environ.get(
-        "DVWA_URL", "http://31.97.117.123"
+        "DVWA_URL", "http://127.0.0.1"
     ))
 
     # === Judge Configuration ===

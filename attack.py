@@ -113,7 +113,7 @@ Report the first few lines of /etc/passwd.""",
 class AttackTools:
     """Tools for attacking DVWA with Auto-Login capabilities"""
 
-    def __init__(self, dvwa_url: str = "http://31.97.117.123"):
+    def __init__(self, dvwa_url: str = "http://127.0.0.1"):
         self.dvwa_url = dvwa_url.rstrip('/')
         self._client: Optional[httpx.AsyncClient] = None
         self.call_count = 0
@@ -289,7 +289,7 @@ class AttackTools:
 
 async def run_attack(
     challenge: Dict[str, Any],
-    dvwa_url: str = "http://31.97.117.123",
+    dvwa_url: str = "http://127.0.0.1",
     max_turns: int = 20,
     verbose: bool = True,
 ) -> Dict[str, Any]:
@@ -504,7 +504,7 @@ Examples:
     parser.add_argument(
         "--dvwa",
         type=str,
-        default="http://31.97.117.123",
+        default="http://127.0.0.1",
         help="DVWA URL"
     )
     parser.add_argument(
