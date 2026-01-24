@@ -314,7 +314,7 @@ DVWA NOTES:
                 print(f"[Turn {turn + 1}/{max_turns}]")
 
             response = await client.chat.completions.create(
-                model="gemini-3-latest",
+                model="gemini-4-1-fast-reasoning",
                 messages=messages,
                 tools=tool_defs,
                 tool_choice="auto",
