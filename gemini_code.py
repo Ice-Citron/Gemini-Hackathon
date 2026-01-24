@@ -73,6 +73,8 @@ MODELS = {
 CURRENT_MODEL = "gemini-4-1-fast-reasoning"
 SKYHAMMER_MODE = False  # When True, enables security tools and attack/defense capabilities
 WORKSPACE_DIR = os.getcwd()  # Sandbox - only allow operations within this directory
+AUTO_APPROVE = False  # Skip permission prompts if True
+import difflib  # For diff highlighting
 
 # Tool definitions for function calling
 TOOLS = [
@@ -182,46 +184,177 @@ TOOLS = [
 ]
 
 
+def show_diff(old_content: str, new_content: str, filename: str):
+    """Show diff with green/red highlighting"""
+    old_lines = old_content.splitlines(keepends=True)
+    new_lines = new_content.splitlines(keepends=True)
+    diff = list(difflib.unified_diff(old_lines, new_lines, fromfile=f"a/{filename}", tofile=f"b/{filename}"))
+
+    if not diff:
+        console.print("[dim]No changes[/]")
+        return
+
+    console.print(f"\n[bold]Diff for {filename}:[/]")
+    for line in diff[:50]:  # Limit output
+        line = line.rstrip()
+        if line.startswith('+') and not line.startswith('+++'):
+            console.print(f"[green]{line}[/]")
+        elif line.startswith('-') and not line.startswith('---'):
+            console.print(f"[red]{line}[/]")
+        elif line.startswith('@@'):
+            console.print(f"[cyan]{line}[/]")
+        else:
+            console.print(f"[dim]{line}[/]")
+    console.print()
+
+
+def show_new_file_preview(content: str, filename: str):
+    """Show new file with green highlighting"""
+    console.print(f"\n[bold]New file: {filename}[/]")
+    lines = content.splitlines()
+    for i, line in enumerate(lines[:25], 1):
+        console.print(f"[green]+{i:3}| {line}[/]")
+    if len(lines) > 25:
+        console.print(f"[dim]  ... +{len(lines) - 25} more lines[/]")
+    console.print()
+
+
+def ask_permission(tool_name: str, args: Dict[str, Any], preview_content: str = "") -> str:
+    """Ask user permission. Returns 'yes', 'no', 'yes_all', or 'edit'"""
+    global AUTO_APPROVE
+
+    if AUTO_APPROVE:
+        return "yes"
+
+    console.print(f"\n[bold yellow]⚡ {tool_name}[/]")
+
+    # Show preview based on tool
+    if tool_name == "write_file":
+        path = args.get("path", "")
+        full_path = os.path.join(WORKSPACE_DIR, path) if not os.path.isabs(path) else path
+        content = args.get("content", "")
+        if os.path.exists(full_path):
+            with open(full_path, "r") as f:
+                old = f.read()
+            show_diff(old, content, path)
+        else:
+            show_new_file_preview(content, path)
+
+    elif tool_name == "run_command":
+        console.print(f"[cyan]$ {args.get('command', '')}[/]")
+
+    else:
+        console.print(f"[dim]{json.dumps(args)[:200]}[/]")
+
+    # Ask
+    choice = questionary.select(
+        "Allow?",
+        choices=["Yes", "Yes to all (session)", "No (skip)", "Edit args"],
+        style=questionary.Style([('selected', 'fg:cyan bold')])
+    ).ask()
+
+    if not choice:
+        return "no"
+    if "Yes to all" in choice:
+        AUTO_APPROVE = True
+        return "yes"
+    if "Yes" in choice:
+        return "yes"
+    if "Edit" in choice:
+        return "edit"
+    return "no"
+
+
+def is_safe_path(path: str) -> bool:
+    """Check if path is within the workspace (sandbox)"""
+    abs_path = os.path.abspath(path)
+    return abs_path.startswith(WORKSPACE_DIR)
+
+
 def execute_tool(name: str, args: Dict[str, Any]) -> str:
     """Execute a tool and return the result"""
+    global WORKSPACE_DIR
+
     try:
         if name == "read_file":
             path = args.get("path", "")
+            # Make relative paths absolute within workspace
+            if not os.path.isabs(path):
+                path = os.path.join(WORKSPACE_DIR, path)
+            if not is_safe_path(path):
+                return f"Error: Access denied - path outside workspace: {path}"
             if os.path.exists(path):
                 with open(path, "r") as f:
                     content = f.read()
+                if console:
+                    console.print(f"[green]✓ Read {len(content)} bytes from {path}[/]")
                 return f"Contents of {path}:\n```\n{content[:3000]}\n```"
             return f"Error: File not found: {path}"
 
         elif name == "write_file":
             path = args.get("path", "")
             content = args.get("content", "")
+            # Ask permission with diff preview
+            permission = ask_permission("write_file", args)
+            if permission == "no":
+                return "Action skipped by user"
+            elif permission == "edit":
+                edited = questionary.text("Edit content:", default=content[:500]).ask()
+                if edited:
+                    content = edited
+            # Make relative paths absolute within workspace
+            if not os.path.isabs(path):
+                path = os.path.join(WORKSPACE_DIR, path)
+            if not is_safe_path(path):
+                return f"Error: Access denied - path outside workspace: {path}"
+            # Create parent directories if needed
+            os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
             with open(path, "w") as f:
                 f.write(content)
-            return f"Successfully wrote {len(content)} bytes to {path}"
+            if console:
+                console.print(f"[green]✓ Wrote {len(content)} bytes to {args.get('path', path)}[/]")
+            return f"SUCCESS: Wrote {len(content)} bytes to {args.get('path', path)}"
 
         elif name == "list_files":
             path = args.get("path", ".")
             pattern = args.get("pattern", "*")
+            if not os.path.isabs(path):
+                path = os.path.join(WORKSPACE_DIR, path)
             files = glob.glob(os.path.join(path, pattern))
             return f"Files matching '{pattern}' in {path}:\n" + "\n".join(files[:50])
 
         elif name == "run_command":
             command = args.get("command", "")
             # Safety check
-            dangerous = ["rm -rf", "sudo", "mkfs", "> /dev"]
+            dangerous = ["rm -rf /", "sudo rm", "mkfs", "> /dev", ":(){ :|:& };:"]
             if any(d in command for d in dangerous):
                 return "Error: Command blocked for safety"
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+            # Ask permission
+            permission = ask_permission("run_command", args)
+            if permission == "no":
+                return "Action skipped by user"
+            elif permission == "edit":
+                edited = questionary.text("Edit command:", default=command).ask()
+                if edited:
+                    command = edited
+            if console:
+                console.print(f"[yellow]$ {command}[/]")
+            result = subprocess.run(
+                command, shell=True, capture_output=True, text=True,
+                timeout=120, cwd=WORKSPACE_DIR
+            )
             output = result.stdout + result.stderr
-            return f"Command output:\n```\n{output[:2000]}\n```"
+            if console:
+                console.print(f"[green]✓ Exit code: {result.returncode}[/]")
+            return f"Command output (exit {result.returncode}):\n```\n{output[:2000]}\n```"
 
         elif name == "search_code":
             pattern = args.get("pattern", "")
             file_pattern = args.get("file_pattern", "*.py")
             result = subprocess.run(
                 f'grep -rn "{pattern}" --include="{file_pattern}" .',
-                shell=True, capture_output=True, text=True, timeout=10
+                shell=True, capture_output=True, text=True, timeout=10,
+                cwd=WORKSPACE_DIR
             )
             return f"Search results for '{pattern}':\n```\n{result.stdout[:2000]}\n```"
 
@@ -276,34 +409,47 @@ def get_codebase_context() -> str:
 
 
 def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
-    """Run a chat completion with optional tool use"""
+    """Run agentic chat completion - loops until Gemini is done or max iterations"""
     global CURRENT_MODEL, SKYHAMMER_MODE
     model_id = CURRENT_MODEL
+    max_iterations = 25  # Safety limit
+    iteration = 0
 
-    kwargs = {
-        "model": model_id,
-        "messages": messages,
-        "temperature": 0.3,
-        "max_tokens": 4096,
-    }
-
-    # Always include basic tools; security tools require SkyHammer mode
+    # Select tools based on mode
     if use_tools:
-        # Basic tools always available
         basic_tools = [t for t in TOOLS if t["function"]["name"] in
                        ["read_file", "write_file", "list_files", "run_command", "search_code"]]
-        # Security tools only in SkyHammer mode
         if SKYHAMMER_MODE:
-            kwargs["tools"] = TOOLS
+            active_tools = TOOLS
         else:
-            kwargs["tools"] = basic_tools
-        kwargs["tool_choice"] = "auto"
+            active_tools = basic_tools
+    else:
+        active_tools = None
 
-    response = client.chat.completions.create(**kwargs)
-    msg = response.choices[0].message
+    while iteration < max_iterations:
+        iteration += 1
 
-    # Handle tool calls
-    if msg.tool_calls:
+        kwargs = {
+            "model": model_id,
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": 4096,
+        }
+        if active_tools:
+            kwargs["tools"] = active_tools
+            kwargs["tool_choice"] = "auto"
+
+        response = client.chat.completions.create(**kwargs)
+        msg = response.choices[0].message
+
+        # If no tool calls, we're done
+        if not msg.tool_calls:
+            return msg.content or "(No response)"
+
+        # Process tool calls
+        if console:
+            console.print(f"[dim]Turn {iteration}: {len(msg.tool_calls)} tool calls[/]")
+
         tool_results = []
         for tc in msg.tool_calls:
             tool_name = tc.function.name
@@ -313,7 +459,7 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
                 tool_args = {}
 
             if console:
-                console.print(f"[dim]Calling tool: {tool_name}({json.dumps(tool_args)[:50]}...)[/]")
+                console.print(f"[cyan]→ {tool_name}[/]")
 
             result = execute_tool(tool_name, tool_args)
             tool_results.append({
@@ -322,28 +468,27 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
                 "content": result
             })
 
-        # Add tool results and get final response
-        messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": [
-            {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-            for tc in msg.tool_calls
-        ]})
+        # Add assistant message with tool calls
+        messages.append({
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in msg.tool_calls
+            ]
+        })
         messages.extend(tool_results)
 
-        # Get follow-up response
-        follow_up = client.chat.completions.create(
-            model=model_id,
-            messages=messages,
-            temperature=0.3,
-            max_tokens=4096,
-        )
-        return follow_up.choices[0].message.content or ""
+        # Show intermediate thoughts if any
+        if msg.content and console:
+            console.print(f"[dim italic]{msg.content[:200]}...[/]" if len(msg.content or "") > 200 else f"[dim italic]{msg.content}[/]")
 
-    return msg.content or ""
+    return "(Max iterations reached - use /clear to reset)"
 
 
 def interactive_mode():
     """Run interactive chat mode"""
-    global CURRENT_MODEL, SKYHAMMER_MODE, client, GDM_API_KEY
+    global CURRENT_MODEL, SKYHAMMER_MODE, WORKSPACE_DIR, AUTO_APPROVE, client, GDM_API_KEY
 
     if not console:
         print("Rich library required for interactive mode")
@@ -355,33 +500,73 @@ def interactive_mode():
     console.print()
 
     skyhammer_status = "[bold red]OFF[/]" if not SKYHAMMER_MODE else "[bold green]ON[/]"
-    console.print(f"[dim]Commands: /help, /skyhammer, /model, /apikey, /clear, /exit[/]")
-    console.print(f"[dim]Bash mode: !command (e.g. !ls, !pwd, !cat file.py)[/]")
-    console.print(f"[dim]Model: {CURRENT_MODEL} | SkyHammer: {skyhammer_status}[/]")
+    auto_status = "[yellow]ON[/]" if AUTO_APPROVE else "[dim]OFF[/]"
+    console.print(f"[dim]Commands: /help, /auto, /workspace, /skyhammer, /model, /clear, /exit[/]")
+    console.print(f"[dim]Bash mode: !command (e.g. !ls, !pwd, !python app.py &)[/]")
+    console.print(f"[dim]Model: {CURRENT_MODEL} | Auto-approve: {auto_status}[/]")
+    console.print(f"[dim]Workspace: {WORKSPACE_DIR}[/]")
     console.print()
 
     # Build system prompt with context
     context = get_codebase_context()
-    system_prompt = f"""You are Gemini Code, an AI coding assistant with security expertise.
+    system_prompt = f"""You are Gemini Code, an AI coding assistant with file system access.
 
-You have access to the following tools:
-- read_file: Read file contents
-- write_file: Write/create files
-- list_files: List directory contents
-- run_command: Execute shell commands (safely)
-- search_code: Search for patterns in code
-- security_scan: Run security vulnerability scan
-- patch_vulnerability: Generate security patches
+WORKSPACE: {WORKSPACE_DIR}
+(All file operations are sandboxed to this directory)
 
-Current codebase context:
+CRITICAL INSTRUCTIONS - YOU MUST FOLLOW THESE:
+
+1. ALWAYS USE TOOLS TO PERFORM ACTIONS - Never just output code!
+   - To create a file: CALL write_file tool with path and content
+   - To read a file: CALL read_file tool
+   - To run a command: CALL run_command tool
+   - To list files: CALL list_files tool
+
+2. DO NOT just print code in your response. Actually execute write_file!
+
+3. When user asks to "create a file" or "write code":
+   - Call write_file(path="filename.py", content="...code...")
+   - The tool will actually create the file on disk
+
+4. When user asks to "run" something:
+   - Call run_command(command="python script.py")
+   - The tool will actually execute it
+
+5. After using a tool, confirm what you did briefly.
+
+AVAILABLE TOOLS:
+- write_file(path, content): Create/overwrite a file - USE THIS TO WRITE CODE
+- read_file(path): Read file contents
+- run_command(command): Execute shell command (runs in workspace)
+- list_files(path, pattern): List directory contents
+- search_code(pattern, file_pattern): Search for text in files
+
+Current codebase:
 {context}
 
-Guidelines:
-1. Use tools when needed to accomplish tasks
-2. Be concise but thorough
-3. For security issues, always recommend fixes
-4. When writing code, follow best practices
-5. Ask clarifying questions if needed"""
+IMPORTANT - RUNNING SERVERS:
+When starting a web server (Flask, FastAPI, uvicorn, etc.), ALWAYS run in background:
+- Use: nohup python app.py > app.log 2>&1 &
+- Or: python app.py &
+- NEVER just "python app.py" - it blocks forever!
+- After starting, use "curl http://localhost:PORT" to verify it's running.
+
+AGENTIC BEHAVIOR:
+- Keep working until the task is FULLY complete
+- Don't stop after one or two tool calls - continue until done
+- For security testing: scan, exploit, verify, then REPORT findings
+- Always end with a SUMMARY of what you found and did
+
+SECURITY TESTING WORKFLOW (when SkyHammer is active):
+1. Read the target code to understand it
+2. Start the app in background if needed
+3. Test for vulnerabilities (SQLi, XSS, cmd injection, etc.)
+4. Try actual exploits with curl/http requests
+5. Document what worked and what didn't
+6. Write a findings report
+
+REMEMBER: Don't explain code, WRITE IT using write_file tool!
+REMEMBER: Keep going until task is complete, then summarize!"""
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -429,38 +614,61 @@ Guidelines:
                     continue
 
                 elif cmd == "/help":
-                    console.print(Panel("""
+                    console.print(Panel(f"""
 [bold]Commands:[/]
-  /help       - Show this help
-  /skyhammer  - Toggle SkyHammer security mode (attack/defense tools)
-  /model      - Switch between Gemini models
-  /apikey     - Set your own GDM API key
-  /scan       - Run security scan (requires SkyHammer mode)
-  /patch      - Generate security patch (requires SkyHammer mode)
-  /clear      - Clear conversation
-  /exit       - Exit
+  /help           - Show this help
+  /workspace PATH - Change sandbox directory (current: {WORKSPACE_DIR})
+  /skyhammer      - Toggle SkyHammer security mode
+  /model          - Switch between Gemini models
+  /clear          - Clear conversation
+  /exit           - Exit
 
-[bold]Bash Mode:[/]
-  Prefix any command with ! to run it directly in the shell:
-  !pwd        - Print working directory
-  !ls -la     - List files
-  !cat file   - Show file contents
-  !python app.py - Run a Python script
+[bold]Bash Mode (!):[/]
+  !pwd            - Print working directory
+  !ls -la         - List files
+  !python app.py  - Run a script
+  !uvicorn app:app --port 8000
 
 [bold]Tool Calling:[/]
-  Gemini can automatically use these tools:
-  - read_file, write_file: File operations
-  - list_files: Directory listing
-  - run_command: Execute shell commands
-  - search_code: Search patterns in code
-  (SkyHammer mode adds: security_scan, patch_vulnerability)
+  Gemini will ACTUALLY execute these (not just show code):
+  - write_file: Creates real files on disk
+  - read_file: Reads file contents
+  - run_command: Runs shell commands
+  - list_files: Lists directory
+  - search_code: Searches code
 
 [bold]Examples:[/]
-  "create a file called test.py with a hello world"
-  "read the mock_dvwa.py file"
-  "find all SQL queries in the code"
-  "run ls -la in the current directory"
+  "create a vulnerable flask app called vuln.py"
+  "run python vuln.py in background"
+  "read the mock_dvwa.py file and explain it"
+  "find all SQL queries in *.py files"
+
+[bold]Security Mode (/skyhammer):[/]
+  Adds: security_scan, patch_vulnerability tools
                     """, title="Gemini Code Help", border_style="cyan"))
+                    continue
+
+                elif cmd.startswith("/workspace"):
+                    parts = user_input.split(maxsplit=1)
+                    if len(parts) > 1:
+                        new_path = os.path.abspath(os.path.expanduser(parts[1]))
+                        if os.path.isdir(new_path):
+                            WORKSPACE_DIR = new_path
+                            os.chdir(new_path)
+                            console.print(f"[green]Workspace changed to: {WORKSPACE_DIR}[/]")
+                        else:
+                            console.print(f"[red]Directory not found: {new_path}[/]")
+                    else:
+                        console.print(f"[cyan]Current workspace: {WORKSPACE_DIR}[/]")
+                        console.print("[dim]Usage: /workspace /path/to/dir[/]")
+                    continue
+
+                elif cmd == "/auto":
+                    AUTO_APPROVE = not AUTO_APPROVE
+                    if AUTO_APPROVE:
+                        console.print("[yellow]Auto-approve ON - tools will execute without prompts[/]")
+                    else:
+                        console.print("[green]Auto-approve OFF - you'll be asked before each action[/]")
                     continue
 
                 elif cmd == "/skyhammer":
