@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Gemini Code CLI - GDM's Claude Code Alternative
+SkyHammer - Gemini-Powered Security & Coding CLI
 
-An interactive coding assistant with integrated security tools.
+An autonomous AI system for security testing, code generation, and remediation.
 Features:
 - Interactive chat with codebase context
 - Code generation and editing
@@ -58,12 +58,20 @@ console = Console() if HAS_RICH else None
 # Initialize client
 client = OpenAI(api_key=GDM_API_KEY, base_url="https://api.x.ai/v1")
 
-# Available models - all using gemini-4-1-fast-reasoning (massive discount!)
+# Available models with pricing (per million tokens: input/output)
 MODELS = {
-    "code": "gemini-4-1-fast-reasoning",
-    "reason": "gemini-4-1-fast-reasoning",
-    "chat": "gemini-4-1-fast-reasoning",
+    "gemini-4-1-fast-reasoning": {"price": "$0.20/$0.50", "desc": "Best value, reasoning enabled"},
+    "gemini-4-1-fast-non-reasoning": {"price": "$0.20/$0.50", "desc": "Fast, no chain-of-thought"},
+    "gemini-code-fast-1": {"price": "$0.20/$1.50", "desc": "Specialized for code"},
+    "gemini-4-fast-reasoning": {"price": "$0.20/$0.50", "desc": "Reasoning model"},
+    "gemini-4-fast-non-reasoning": {"price": "$0.20/$0.50", "desc": "Fast general model"},
+    "gemini-3-mini": {"price": "$0.30/$0.50", "desc": "Lightweight, fast"},
+    "gemini-3-latest": {"price": "$0.30/$0.50", "desc": "Stable release"},
 }
+
+# Current settings
+CURRENT_MODEL = "gemini-4-1-fast-reasoning"
+SKYHAMMER_MODE = False  # When True, enables security tools and attack/defense capabilities
 
 # Tool definitions for function calling
 TOOLS = [
@@ -266,9 +274,10 @@ def get_codebase_context() -> str:
     return "\n".join(context_parts) if context_parts else "No context files found."
 
 
-def chat_completion(messages: List[Dict], model: str = "code", use_tools: bool = True) -> str:
+def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
     """Run a chat completion with optional tool use"""
-    model_id = MODELS.get(model, MODELS["code"])
+    global CURRENT_MODEL, SKYHAMMER_MODE
+    model_id = CURRENT_MODEL
 
     kwargs = {
         "model": model_id,
@@ -277,7 +286,8 @@ def chat_completion(messages: List[Dict], model: str = "code", use_tools: bool =
         "max_tokens": 4096,
     }
 
-    if use_tools:
+    # Only include security tools if SkyHammer mode is active
+    if use_tools and SKYHAMMER_MODE:
         kwargs["tools"] = TOOLS
         kwargs["tool_choice"] = "auto"
 
@@ -325,16 +335,20 @@ def chat_completion(messages: List[Dict], model: str = "code", use_tools: bool =
 
 def interactive_mode():
     """Run interactive chat mode"""
+    global CURRENT_MODEL, SKYHAMMER_MODE, client, GDM_API_KEY
+
     if not console:
         print("Rich library required for interactive mode")
         return
 
     console.print("\n[bold cyan]╔══════════════════════════════════════════════════════════╗[/]")
-    console.print("[bold cyan]║          Gemini Code - Interactive Coding Assistant         ║[/]")
+    console.print("[bold cyan]║             Gemini Code - Powered by GDM                    ║[/]")
     console.print("[bold cyan]╚══════════════════════════════════════════════════════════╝[/]")
     console.print()
-    console.print("[dim]Commands: /help, /scan, /patch, /model, /clear, /exit[/]")
-    console.print("[dim]Model: gemini-code-fast-1 | Context: Local Codebase[/]")
+
+    skyhammer_status = "[bold red]OFF[/]" if not SKYHAMMER_MODE else "[bold green]ON[/]"
+    console.print(f"[dim]Commands: /help, /skyhammer, /model, /apikey, /clear, /exit[/]")
+    console.print(f"[dim]Model: {CURRENT_MODEL} | SkyHammer: {skyhammer_status}[/]")
     console.print()
 
     # Build system prompt with context
@@ -361,7 +375,6 @@ Guidelines:
 5. Ask clarifying questions if needed"""
 
     messages = [{"role": "system", "content": system_prompt}]
-    current_model = "code"
 
     while True:
         try:
@@ -389,12 +402,20 @@ Guidelines:
                 elif cmd == "/help":
                     console.print(Panel("""
 [bold]Commands:[/]
-  /help     - Show this help
-  /scan     - Run security scan on a file
-  /patch    - Generate security patch
-  /model    - Switch model (code/reason/chat)
-  /clear    - Clear conversation
-  /exit     - Exit
+  /help       - Show this help
+  /skyhammer  - Toggle SkyHammer security mode (attack/defense tools)
+  /model      - Switch between Gemini models
+  /apikey     - Set your own GDM API key
+  /scan       - Run security scan (requires SkyHammer mode)
+  /patch      - Generate security patch (requires SkyHammer mode)
+  /clear      - Clear conversation
+  /exit       - Exit
+
+[bold]SkyHammer Mode:[/]
+  When activated, Gemini Code gains access to security tools:
+  - File read/write, shell commands, code search
+  - Security scanning and vulnerability detection
+  - Auto-patching and remediation
 
 [bold]Examples:[/]
   "read the mock_dvwa.py file"
@@ -403,6 +424,26 @@ Guidelines:
   "scan this file for vulnerabilities"
   "fix the SQL injection in mock_dvwa.py"
                     """, title="Gemini Code Help", border_style="cyan"))
+                    continue
+
+                elif cmd == "/skyhammer":
+                    SKYHAMMER_MODE = not SKYHAMMER_MODE
+                    if SKYHAMMER_MODE:
+                        console.print("[bold green]SkyHammer Mode ACTIVATED[/]")
+                        console.print("[dim]Security tools now available: scan, patch, shell, file ops[/]")
+                    else:
+                        console.print("[bold red]SkyHammer Mode DEACTIVATED[/]")
+                        console.print("[dim]Running in standard coding assistant mode[/]")
+                    continue
+
+                elif cmd == "/apikey":
+                    new_key = questionary.password("Enter your GDM API key:").ask()
+                    if new_key and new_key.startswith("xai-"):
+                        GDM_API_KEY = new_key
+                        client = OpenAI(api_key=GDM_API_KEY, base_url="https://api.x.ai/v1")
+                        console.print("[green]API key updated successfully![/]")
+                    else:
+                        console.print("[red]Invalid API key format (should start with 'xai-')[/]")
                     continue
 
                 elif cmd == "/scan":
@@ -416,13 +457,18 @@ Guidelines:
                         user_input = f"Analyze {target} for security vulnerabilities and generate a patched version."
 
                 elif cmd.startswith("/model"):
+                    # Build choices with pricing info
+                    model_choices = []
+                    for model_id, info in MODELS.items():
+                        model_choices.append(f"{model_id} | {info['price']} | {info['desc']}")
+
                     model_choice = questionary.select(
                         "Select model:",
-                        choices=["code (fast)", "reason (smart)", "chat (general)"]
+                        choices=model_choices
                     ).ask()
                     if model_choice:
-                        current_model = model_choice.split(" ")[0]
-                        console.print(f"[green]Switched to {current_model} model[/]")
+                        CURRENT_MODEL = model_choice.split(" | ")[0]
+                        console.print(f"[green]Switched to {CURRENT_MODEL}[/]")
                     continue
 
                 else:
@@ -437,7 +483,7 @@ Guidelines:
             console.print("[dim]Gemini is thinking...[/]")
 
             try:
-                response = chat_completion(messages, model=current_model, use_tools=True)
+                response = chat_completion(messages, use_tools=True)
 
                 # Display response
                 console.print()
@@ -461,6 +507,9 @@ Guidelines:
 
 def single_command_mode(prompt: str):
     """Run a single command and exit"""
+    global SKYHAMMER_MODE
+    SKYHAMMER_MODE = True  # Enable tools for single command mode
+
     context = get_codebase_context()
     system_prompt = f"""You are Gemini Code. Execute this task efficiently.
 Context: {context[:1000]}"""
@@ -470,7 +519,7 @@ Context: {context[:1000]}"""
         {"role": "user", "content": prompt}
     ]
 
-    response = chat_completion(messages, model="code", use_tools=True)
+    response = chat_completion(messages, use_tools=True)
 
     if console:
         console.print(Markdown(response))

@@ -434,7 +434,7 @@ def main_menu():
         choice = questionary.select(
             "Select operation:",
             choices=[
-                "1. 💬 Gemini Code: Interactive Coding Assistant",
+                "1. 💬 Gemini Code + SkyHammer: Interactive AI Assistant",
                 "2. ⚔️  Attack: Target URL (Paste Link)",
                 "3. 🧪 Attack: Synthetic Challenge (Generate & Attack)",
                 "4. 🛡️  Defense: AI Patcher (Fix Code)",
