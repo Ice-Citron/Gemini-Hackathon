@@ -1,3 +1,7 @@
+runs/
+testing/
+testing-ground/
+
 .DS_Store
 secretsConfig.py
 PROJECT_STATUS.md
