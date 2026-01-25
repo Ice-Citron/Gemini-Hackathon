@@ -1,0 +1,13 @@
+torch
+transformers
+datasets
+huggingface_hub
+wandb
+python-dotenv
+# The Unsloth magic (Pre-compiled for Colab/A100/H100)
+unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git
+# TRL for the trainer
+trl<0.9.0
+peft
+accelerate
+bitsandbytes

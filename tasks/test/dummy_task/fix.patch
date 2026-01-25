@@ -1,0 +1,11 @@
+--- a/app.py
++++ b/app.py
+@@ -1,7 +1,7 @@
+ # Vulnerable code
+ def check_password(input_pass):
+     # Hardcoded = Bad
+-    return input_pass == "secret123"
++    return input_pass == "newpassword"
+ 
+ if __name__ == "__main__":
+     pass
