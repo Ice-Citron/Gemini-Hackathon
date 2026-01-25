@@ -3,9 +3,14 @@ testing/
 testing-ground/
 data/
 
+*.diff
+
 .DS_Store
 secretsConfig.py
 PROJECT_STATUS.md
+
+
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
