@@ -1,6 +1,7 @@
 runs/
 testing/
 testing-ground/
+data/
 
 .DS_Store
 secretsConfig.py
