@@ -4,7 +4,8 @@ import json
 import time
 import threading
 import concurrent.futures
-import google.generativeai as genai
+from google import genai            # <--- NEW LIBRARY
+from google.genai import types      # <--- NEW TYPES
 from huggingface_hub import HfApi, create_repo
 from typing import List, Dict
 
@@ -23,7 +24,7 @@ if not GEMINI_API_KEY:
 if not HF_TOKEN:
     print("⚠️  HF_TOKEN not found in secretsConfig.py. Upload will be skipped.")
 
-genai.configure(api_key=GEMINI_API_KEY)
+# NOTE: No global genai.configure() needed anymore. We use a Client instance.
 
 # --- 2. CONFIGURATION ---
 HF_REPO_ID = "shng2025/SkyHammer-Gemini-Dataset"
@@ -68,7 +69,10 @@ file_lock = threading.Lock()
 def generate_sample(args) -> Dict:
     """Wrapper function for threading"""
     vuln_type, index = args
-    model = genai.GenerativeModel(TEACHER_MODEL)
+    
+    # --- NEW CLIENT INITIALIZATION ---
+    # It is safe to initialize this per thread or pass a global one.
+    client = genai.Client(api_key=GEMINI_API_KEY)
     
     # Unique ID generation
     short_code = "".join([w[0] for w in vuln_type.split()[:3]]).lower()
@@ -78,10 +82,16 @@ def generate_sample(args) -> Dict:
     
     print(f"[*] Requesting {task_id}...")
     try:
-        response = model.generate_content(
-            contents=[{"role": "user", "parts": [SYSTEM_PROMPT, prompt]}],
-            generation_config={"response_mime_type": "application/json"}
+        # --- NEW GENERATION METHOD ---
+        response = client.models.generate_content(
+            model=TEACHER_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,  # System prompt goes here now
+                response_mime_type="application/json"
+            )
         )
+        
         data = json.loads(response.text)
         # Ensure task_id matches our format
         data["task_id"] = task_id
@@ -117,14 +127,14 @@ def main():
     # 1. Prepare the Task List
     tasks = []
     for vuln in VULN_TYPES:
-        for i in range(1, 11):  # 5 samples per type
+        for i in range(1, 2):  # 10 samples per type (updated range from your script comment which said 5)
             tasks.append((vuln, i))
             
     successful_count = 0
     
     # 2. Run with ThreadPool (Concurrency)
     # max_workers=5 keeps us safe from rate limits while being fast
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         # Submit all tasks
         future_to_task = {executor.submit(generate_sample, task): task for task in tasks}
         

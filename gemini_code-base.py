@@ -50,11 +50,11 @@ except ImportError:
     sys.exit(1)
 
 try:
-    import google.generativeai as genai
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+    from google import genai
+    from google.genai import types
 except ImportError:
-    print("CRITICAL ERROR: Google Generative AI SDK missing.")
-    print("RUN: pip install google-generativeai")
+    print("CRITICAL ERROR: Google GenAI SDK v1.0+ missing.")
+    print("RUN: pip install google-genai")
     sys.exit(1)
 
 # Import from modules
@@ -85,7 +85,7 @@ if not GEMINI_API_KEY:
     sys.exit(1)
 
 # Initialize Google Generative AI
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 console = Console() if HAS_RICH else None
 
 # Available Gemini models with pricing (per million tokens: input/output)
@@ -204,37 +204,26 @@ def ask_permission(tool_name: str, args: Dict[str, Any], preview_content: str = 
         resume_listener()
 
 
-def convert_tools_to_gemini(openai_tools: List[Dict]) -> List[Dict]:
-    """Convert OpenAI-style tool definitions to Gemini format"""
-    gemini_tools = []
+def convert_tools_to_gemini(openai_tools: List[Dict]) -> List[types.Tool]:
+    """
+    Convert OpenAI-style tool definitions to Gemini v1 types.Tool format.
+    """
+    declarations = []
     for tool in openai_tools:
         func = tool.get("function", {})
         params = func.get("parameters", {})
-
-        # Convert parameters to Gemini schema format
-        properties = params.get("properties", {})
-        required = params.get("required", [])
-
-        gemini_props = {}
-        for prop_name, prop_def in properties.items():
-            gemini_prop = {"type": prop_def.get("type", "string").upper()}
-            if "description" in prop_def:
-                gemini_prop["description"] = prop_def["description"]
-            if "enum" in prop_def:
-                gemini_prop["enum"] = prop_def["enum"]
-            gemini_props[prop_name] = gemini_prop
-
-        gemini_tools.append({
-            "name": func.get("name", ""),
-            "description": func.get("description", ""),
-            "parameters": {
-                "type": "OBJECT",
-                "properties": gemini_props,
-                "required": required
-            }
-        })
-
-    return gemini_tools
+        
+        # Create FunctionDeclaration for v1 SDK
+        declarations.append(
+            types.FunctionDeclaration(
+                name=func.get("name"),
+                description=func.get("description"),
+                parameters=params  # v1 SDK accepts the dict schema directly
+            )
+        )
+    
+    # Return a list containing one Tool object with all declarations
+    return [types.Tool(function_declarations=declarations)]
 
 
 def parse_json_tool_calls(text: str) -> List[Dict]:
@@ -276,18 +265,18 @@ def parse_json_tool_calls(text: str) -> List[Dict]:
 
 
 def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
-    """Run agentic chat completion with Gemini and cyberpunk spinner"""
+    """
+    Run agentic chat completion with Gemini (v1 SDK) and cyberpunk spinner.
+    """
     global CURRENT_MODEL, SKYHAMMER_MODE, INTERRUPT_REQUESTED, LAST_CREATED_FILE
+    
     model_id = CURRENT_MODEL
     max_iterations = 100
     iteration = 0
 
-    # Select tools based on mode
+    # 1. Select Tools based on mode
     if use_tools:
-        if SKYHAMMER_MODE:
-            active_tools = TOOLS
-        else:
-            active_tools = BASIC_TOOLS
+        active_tools = TOOLS if SKYHAMMER_MODE else BASIC_TOOLS
     else:
         active_tools = None
 
@@ -296,91 +285,73 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
 
     set_task_status("thinking")
 
-    # Convert tools to Gemini format
-    gemini_tools = None
+    # 2. Convert Tools to v1 Format
+    v1_tools = None
     if active_tools:
-        gemini_tool_defs = convert_tools_to_gemini(active_tools)
-        gemini_tools = [genai.protos.Tool(
-            function_declarations=[
-                genai.protos.FunctionDeclaration(
-                    name=t["name"],
-                    description=t["description"],
-                    parameters=genai.protos.Schema(
-                        type=genai.protos.Type.OBJECT,
-                        properties={
-                            k: genai.protos.Schema(
-                                type=getattr(genai.protos.Type, v.get("type", "STRING")),
-                                description=v.get("description", ""),
-                                enum=v.get("enum", []) if "enum" in v else None
-                            ) for k, v in t["parameters"]["properties"].items()
-                        },
-                        required=t["parameters"].get("required", [])
-                    )
-                ) for t in gemini_tool_defs
-            ]
-        )]
+        v1_tools = convert_tools_to_gemini(active_tools)
 
-    # Initialize model with safety settings disabled for security testing
-    safety_settings = {
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-    }
-
-    # Configure tool behavior - AUTO means model decides when to call tools
-    tool_config = None
-    if gemini_tools:
-        tool_config = genai.protos.ToolConfig(
-            function_calling_config=genai.protos.FunctionCallingConfig(
-                mode=genai.protos.FunctionCallingConfig.Mode.AUTO
-            )
-        )
-
-    model = genai.GenerativeModel(
-        model_name=model_id,
-        safety_settings=safety_settings,
-        tools=gemini_tools if gemini_tools else None,
-        tool_config=tool_config
-    )
-
-    # Convert messages to Gemini format
-    # Extract system prompt and build history
+    # 3. Prepare Configuration & History
+    # Extract system instruction and build chat history compatible with v1
     system_instruction = None
-    gemini_history = []
+    chat_history = []
+    last_user_msg = ""
 
     for msg in messages:
-        role = msg.get("role", "")
+        role = msg.get("role")
         content = msg.get("content", "")
-
+        
         if role == "system":
             system_instruction = content
         elif role == "user":
-            gemini_history.append({"role": "user", "parts": [content]})
+            chat_history.append(types.Content(role="user", parts=[types.Part(text=content)]))
         elif role == "assistant":
-            gemini_history.append({"role": "model", "parts": [content]})
-        elif role == "tool":
-            # Tool results go as function responses
-            pass  # Handled in the loop below
+            chat_history.append(types.Content(role="model", parts=[types.Part(text=content)]))
+        # Note: Tool outputs are handled within the session loop, not usually in init history for v1
+    
+    # Pop the last user message to use as the trigger
+    if chat_history and chat_history[-1].role == "user":
+        last_user_msg = chat_history.pop().parts[0].text
+    else:
+        last_user_msg = "Continue working on the task."
 
-    # Create chat with system instruction
-    if system_instruction:
-        model = genai.GenerativeModel(
-            model_name=model_id,
-            safety_settings=safety_settings,
-            tools=gemini_tools if gemini_tools else None,
-            tool_config=tool_config,
-            system_instruction=system_instruction
-        )
+    # Define v1 Config
+    config = types.GenerateContentConfig(
+        temperature=0.1,
+        max_output_tokens=8192,
+        tools=v1_tools,
+        system_instruction=system_instruction,
+        safety_settings=[
+            types.SafetySetting(
+                category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                threshold="BLOCK_NONE"
+            ),
+            types.SafetySetting(
+                category="HARM_CATEGORY_HARASSMENT",
+                threshold="BLOCK_NONE"
+            ),
+            types.SafetySetting(
+                category="HARM_CATEGORY_HATE_SPEECH",
+                threshold="BLOCK_NONE"
+            ),
+            types.SafetySetting(
+                category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                threshold="BLOCK_NONE"
+            ),
+        ],
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode="AUTO"
+            )
+        ) if v1_tools else None
+    )
 
-    chat = model.start_chat(history=gemini_history[:-1] if gemini_history else [])
-
-    # Get the last user message
-    last_user_msg = ""
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            last_user_msg = msg.get("content", "")
-            break
+    # 4. Initialize Chat Session
+    # Using the global 'client' object initialized earlier
+    chat = client.chats.create(
+        model=model_id,
+        config=config,
+        history=chat_history
+    )
 
     try:
         while iteration < max_iterations:
@@ -392,73 +363,72 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
 
             set_task_status("thinking")
 
+            # UI Progress Spinner
             with Progress(
                 SpinnerColumn(spinner_name="dots12", style="bold yellow"),
                 TextColumn(f"[{C_PRIMARY}]{{task.description}}[/]"),
                 transient=True
             ) as progress:
-                task_id = progress.add_task(f"SYNCING WITH NEURAL NETWORK [CYCLE {iteration}]...", total=None)
+                progress.add_task(f"SYNCING WITH NEURAL NETWORK [CYCLE {iteration}]...", total=None)
 
+                # Send Message
                 if iteration == 1:
-                    # First iteration: send the user message
                     response = chat.send_message(last_user_msg)
                 else:
-                    # Subsequent iterations: send tool results
+                    # Send tool outputs from previous cycle
                     response = chat.send_message(tool_response_parts)
 
-            # Check for function calls
+            # 5. Parse Response
             function_calls = []
             text_response = ""
+            
+            # v1: Access candidates directly
+            if response.candidates and response.candidates[0].content.parts:
+                for part in response.candidates[0].content.parts:
+                    if part.function_call:
+                        function_calls.append(part.function_call)
+                    if part.text:
+                        text_response += part.text
 
-            for part in response.parts:
-                if hasattr(part, 'function_call') and part.function_call:
-                    function_calls.append(part.function_call)
-                elif hasattr(part, 'text') and part.text:
-                    text_response += part.text
-
-            # Fallback: parse JSON tool calls from text if no function calls detected
+            # Fallback for JSON-in-text (when model hallucinates tool usage as text)
             parsed_tool_calls = []
             if not function_calls and text_response and use_tools:
                 parsed_tool_calls = parse_json_tool_calls(text_response)
                 if parsed_tool_calls and console:
-                    console.print(f"[{C_ACCENT}]>> DETECTED {len(parsed_tool_calls)} TOOL CALLS IN TEXT (fallback) <<[/]")
+                     console.print(f"[{C_ACCENT}]>> DETECTED {len(parsed_tool_calls)} TOOL CALLS IN TEXT (fallback) <<[/]")
 
+            # Log API Call
             tool_call_names = [fc.name for fc in function_calls] if function_calls else [tc["name"] for tc in parsed_tool_calls]
             log_api_call(model_id, len(messages), text_response, tool_call_names)
 
             if tool_call_names:
                 set_task_status("executing", tool_call_names)
 
+            # Check for Completion
             if not function_calls and not parsed_tool_calls:
                 set_task_status("done")
-
-                # Check if we created a file and should recommend SkyHammer
                 if LAST_CREATED_FILE and not SKYHAMMER_MODE:
                     print_mission_complete_banner(LAST_CREATED_FILE)
                     LAST_CREATED_FILE = None
-
                 return text_response or "(No response)"
 
             if INTERRUPT_REQUESTED:
-                set_task_status("idle")
                 return "(Interrupted by user)"
 
-            total_calls = len(function_calls) + len(parsed_tool_calls)
+            # 6. Execute Tools
             if console:
-                console.print(f"[{C_DIM}]>> CYCLE {iteration}: {total_calls} TOOL CALLS <<[/]")
+                console.print(f"[{C_DIM}]>> CYCLE {iteration}: {len(tool_call_names)} TOOL CALLS <<[/]")
 
-            # Execute tools and collect results
             tool_response_parts = []
-            tool_results_text = []
+            tool_results_text = [] # For fallback text-based tools
 
-            # Handle native Gemini function calls
+            # Native Function Calls
             for fc in function_calls:
-                if INTERRUPT_REQUESTED:
-                    return "(Interrupted by user mid-execution)"
-
+                if INTERRUPT_REQUESTED: return "(Interrupted)"
+                
                 tool_name = fc.name
-                tool_args = dict(fc.args) if fc.args else {}
-
+                tool_args = fc.args # v1 SDK provides this as a dictionary/struct
+                
                 if console:
                     console.print(f"[{C_SECONDARY}]-> {tool_name}[/]")
 
@@ -467,28 +437,26 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
                     console, ask_permission, FILE_BACKUPS
                 )
 
-                # Track file creation for recommendation
-                if tool_name == "write_file" and "SUCCESS" in result:
+                if tool_name == "write_file" and "SUCCESS" in str(result):
                     LAST_CREATED_FILE = tool_args.get("path", "")
 
-                # Build function response for Gemini
+                # Create v1 FunctionResponse Part
                 tool_response_parts.append(
-                    genai.protos.Part(
-                        function_response=genai.protos.FunctionResponse(
+                    types.Part(
+                        function_response=types.FunctionResponse(
                             name=tool_name,
-                            response={"result": result}
+                            response={"result": result} 
                         )
                     )
                 )
 
-            # Handle parsed JSON tool calls (fallback)
+            # Fallback JSON Calls
             for tc in parsed_tool_calls:
-                if INTERRUPT_REQUESTED:
-                    return "(Interrupted by user mid-execution)"
-
+                if INTERRUPT_REQUESTED: return "(Interrupted)"
+                
                 tool_name = tc["name"]
                 tool_args = tc["args"]
-
+                
                 if console:
                     console.print(f"[{C_SECONDARY}]-> {tool_name} (parsed)[/]")
 
@@ -496,30 +464,28 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
                     tool_name, tool_args, WORKSPACE_DIR,
                     console, ask_permission, FILE_BACKUPS
                 )
-
-                # Track file creation for recommendation
-                if tool_name == "write_file" and "SUCCESS" in result:
+                
+                if tool_name == "write_file" and "SUCCESS" in str(result):
                     LAST_CREATED_FILE = tool_args.get("path", "")
-
+                    
                 tool_results_text.append(f"Tool {tool_name} result: {result}")
 
-            # If we used parsed tool calls, send results as text (since we can't use function_response)
+            # If we had fallback calls, we need to instruct the model to continue via text 
+            # since we can't inject a function_response part for a call the API didn't request
             if parsed_tool_calls and not function_calls:
-                tool_response_parts = "\n\n".join(tool_results_text) + "\n\nContinue with the task based on these results. Use function calls (not JSON in text) for any additional tool usage."
+                 tool_response_parts = [types.Part(text="\n\n".join(tool_results_text) + "\n\nContinue with the task based on these results.")]
 
+            # Print intermediate thought trace if any
             if text_response and console:
                 preview = text_response[:200] + "..." if len(text_response) > 200 else text_response
                 console.print(f"[{C_DIM} italic]{preview}[/]")
 
-        return "(Max iterations reached - use /clear to reset)"
-
-    except KeyboardInterrupt:
-        console.print(f"\n[{C_ACCENT}]>> INTERRUPT SIGNAL RECEIVED <<[/]")
-        return "(Interrupted by user)"
     except Exception as e:
         if console:
             console.print(f"[{C_ERROR}]API Error: {str(e)}[/]")
         return f"(Error: {str(e)})"
+    
+    return "(Max iterations reached)"
 
 
 def interactive_mode():
@@ -987,7 +953,7 @@ START TESTING NOW."""
                     new_key = questionary.password("ENTER GEMINI API KEY:", style=eva_style).ask()
                     if new_key and new_key.startswith("AIza"):
                         GEMINI_API_KEY = new_key
-                        genai.configure(api_key=GEMINI_API_KEY)
+                        client = genai.Client(api_key=GEMINI_API_KEY)
                         console.print(f"[{C_SUCCESS}]>> API KEY UPDATED SUCCESSFULLY <<[/]")
                     else:
                         console.print(f"[{C_ERROR}]INVALID API KEY FORMAT (should start with 'AIza')[/]")
