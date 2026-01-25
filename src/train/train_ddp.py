@@ -9,6 +9,7 @@ from unsloth import is_bfloat16_supported
 
 # --- CONFIGURATION ---
 MODEL_NAME = "unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit"
+            # unsloth/Qwen3-32B-unsloth-bnb-4bit
 DATASET_NAME = "shng2025/SkyHammer-Gemini-Dataset"
 OUTPUT_DIR = "checkpoints/skyhammer_32b_ddp"
 FINAL_REPO = "shng2025/SkyHammer-32B-v1"

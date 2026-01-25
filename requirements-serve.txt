@@ -1,0 +1,9 @@
+# conda create -n skyhammer_serve python=3.11 -y
+# conda activate skyhammer_serve
+# pip install -r requirements-serve.txt
+
+
+
+# vLLM 0.6.3 is the stable partner for Torch 2.4.0
+vllm==0.6.3
+bitsandbytes>=0.44.0
