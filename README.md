@@ -2,7 +2,7 @@
 
 **AI-Powered Cybersecurity Agent for Vulnerability Detection, Exploitation, and Remediation**
 
-Built for the **GDM Geminiathon 2026** | Powered by **Gemini**
+Built for the **Gemini 3 Hackathon 2026** | Powered by **Gemini**
 
 *Per Aspera Ad Astra*
 
@@ -334,7 +334,7 @@ def compute_reward(vulnerable_code, patched_code, test_result):
 ## Project Structure
 
 ```
-GDM-Geminiathon/
+SkyHammer-Gemini-Hack /
 ├── gemini_code-base.py          # Main CLI entry point
 ├── gemini_code.py               # Legacy monolithic version
 ├── secretsConfig.py           # API keys (gitignored)
@@ -507,7 +507,7 @@ SkyHammer is designed for **authorized security testing only**. It includes:
 
 ## Contributing
 
-This project was built for the GDM Geminiathon 2026. Contributions are welcome!
+This project was built for the Gemini 3 Hackathon 2026. Contributions are welcome!
 
 1. Fork the repository
 2. Create a feature branch
@@ -523,7 +523,7 @@ MIT License - See LICENSE file for details.
 
 ## Acknowledgments
 
-- **GDM** for Gemini API access and hosting the Geminiathon
+- **GDM** for Gemini API access and hosting the Hackathon
 - **Anthropic** for Claude (benchmark comparison)
 - **OpenAI** for GPT-4o (benchmark comparison)
 - **Unsloth** for efficient LoRA training
@@ -533,7 +533,7 @@ MIT License - See LICENSE file for details.
 
 ## Contact
 
-Built by the SkyHammer team for GDM Geminiathon 2026 in Central London.
+Built by the Shi Hao Ng (shi-hao.ng@imperial.ac.uk) in South Kensington, London.
 
 ---
 
@@ -546,5 +546,5 @@ Built by the SkyHammer team for GDM Geminiathon 2026 in Central London.
  ╚════██║██╔═██╗   ╚██╔╝  ██╔══██║██╔══██║██║╚██╔╝██║██║╚██╔╝██║██╔══╝  ██╔══██╗
  ███████║██║  ██╗   ██║   ██║  ██║██║  ██║██║ ╚═╝ ██║██║ ╚═╝ ██║███████╗██║  ██║
  ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝
-                         Powered by Gemini | GDM Geminiathon 2026
+                         Powered by Gemini | Gemini 3 Hackathon 2026
 ```

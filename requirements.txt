@@ -1,4 +1,4 @@
-# AthenaGuard - Geminiathon Edition
+# SkyHammer
 # Unified security defense system with Gemini AI
 
 # === Core Dependencies ===

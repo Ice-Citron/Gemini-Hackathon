@@ -1,8 +1,8 @@
 import os
 import subprocess
 import difflib
-from src.types import TaskSpec
-from src.apply_patch import PatchManager
+from src.core.types import TaskSpec
+from src.core.apply_patch import PatchManager
 
 # 1. SETUP PATHS
 workspace = os.path.abspath("tasks/test/dummy_task")

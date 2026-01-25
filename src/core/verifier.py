@@ -2,7 +2,7 @@ import subprocess
 import os
 import time
 from dataclasses import dataclass
-from src.types import TaskSpec
+from src.core.types import TaskSpec
 
 @dataclass
 class VerificationResult:

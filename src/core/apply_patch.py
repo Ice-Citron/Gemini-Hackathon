@@ -3,7 +3,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from src.types import TaskSpec
+from src.core.types import TaskSpec
 
 @dataclass
 class PatchResult:
