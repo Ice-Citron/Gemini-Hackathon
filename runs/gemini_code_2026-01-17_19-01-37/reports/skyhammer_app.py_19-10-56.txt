@@ -1,0 +1,41 @@
+============================================================
+SKYHAMMER REPORT
+============================================================
+Target: testing/app.py
+Timestamp: 2026-01-17T19:10:56.062349
+============================================================
+
+**SkyHammer Patcher Test: SUCCESS!**
+
+Patched testing/app.py - original file overwritten with secure code.
+
+SIDE-BY-SIDE DIFF SUMMARY (key changes):
+
+SQLi (/login):
+- BEFORE: `query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"` → EXPLOIT WORKS
+- AFTER: `cur.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))` → BLOCKED: "Login failed."
+
+XSS (/search):
+- BEFORE: `return f"&lt;h2&gt;Results for your search: {q}&lt;/h2&gt;"`
+- AFTER: `return f"<h2>Results for your search: {escape(q)}</h2>"` → BLOCKED: Entities escaped.
+
+Cmd Inj (/ping):
+- BEFORE: `subprocess.getoutput(f"ping -c 1 {host}")` → ls executed!
+- AFTER: `subprocess.check_output(["ping", "-c", "1", host], timeout=5, text=True, stderr=subprocess.STDOUT)` → BLOCKED: "Ping failed."
+
+Other:
+- Proper HTML rendering (<h1> etc.)
+- debug=False, host=127.0.0.1
+- Timeout, exceptions handled.
+
+**POST-PATCH VERIFICATION (curl proofs):**
+- SQLi attempt: Login failed. ✓
+- XSS payload: Escaped as &lt;script&gt; ✓
+- Cmd inj: Ping failed. (no ls) ✓
+- Page loads proper HTML. ✓
+
+Server restarted on port 5000 (new log: app_secure.log).
+
+SkyHammer full cycle complete: Detect → Exploit → Report → Patch → Verify.
+
+All good! Test the secure app at http://localhost:5000

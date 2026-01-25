@@ -1,0 +1,47 @@
+============================================================
+SKYHAMMER REPORT
+============================================================
+Target: https://perplexity-news-3aba4.web.app/
+Timestamp: 2026-01-17T21:33:16.118056
+============================================================
+
+----------------------------------------
+VULNERABILITY REPORT: https://perplexity-news-3aba4.web.app/
+----------------------------------------
+Target Analysis: Static React SPA (Single Page Application) hosted on Firebase.
+All paths return index.html. No server-side endpoints detected. Client-side only.
+JS bundle: /static/js/main.018233b1.js (minified React). No API/fetch calls visible.
+No Firebase Realtime DB or Cloud Functions exposed. No source code leaks (.git absent).
+Source map exposed: /static/js/main.018233b1.js.map [LOW] - Reveals code mappings.
+
+[SQL INJECTION]
+Status: NOT VULNERABLE
+Tested: curl "https://perplexity-news-3aba4.web.app/search?q=%27%20OR%20%271%27=%271"
+Response: Standard index.html (no param reflection/processing)
+No backend database interaction.
+
+[XSS]
+Status: NOT VULNERABLE (reflected)
+Tested: curl "https://perplexity-news-3aba4.web.app/?q=%3Cscript%3Ealert(1)%3C/script%3E"
+Response: Standard index.html (no echo)
+DOM-based XSS untestable via curl (requires JS execution).
+
+[COMMAND INJECTION]
+Status: NOT VULNERABLE
+Tested: curl "https://perplexity-news-3aba4.web.app/api/users;cat%20/etc/passwd"
+Response: Standard index.html
+No shell access/params processed server-side.
+
+[PATH TRAVERSAL / LFI]
+Status: NOT VULNERABLE
+Tested: curl "https://perplexity-news-3aba4.web.app/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd"
+Response: Empty/404 (no file disclosure)
+.git/HEAD: index.html (no leak)
+
+Hacker's Note:
+No server-side vulns possible in static SPA. All requests SPA-routed client-side.
+Firebase config/DB not public. Secure deployment for tested vectors.
+
+SUMMARY: Clean scan. 0/4 vulnerabilities exploited. Target is secure static frontend.
+Probed 20+ endpoints/payloads via curl. JS analyzed (no APIs). Testing complete.
+----------------------------------------

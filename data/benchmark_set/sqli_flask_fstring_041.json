@@ -1,0 +1,11 @@
+{
+  "id": "sqli_flask_fstring_041",
+  "type": "sqli",
+  "subtype": "flask_fstring",
+  "vulnerable_code": "import sqlite3\nfrom flask import Flask, request, jsonify\n\napp = Flask(__name__)\n\n@app.route('/search')\ndef search():\n    input = request.args.get('input')\n    # VULNERABILITY: Direct f-string interpolation in SQL query\n    query = f\"SELECT * FROM customers WHERE email = '{ input }'\"\n    conn = sqlite3.connect('users.db')\n    cursor = conn.cursor()\n    cursor.execute(query)  # <--- SQL INJECTION HERE\n    results = cursor.fetchall()\n    conn.close()\n    return jsonify(results)\n\nif __name__ == '__main__':\n    app.run(debug=True, port=5000)\n",
+  "secure_code": "import sqlite3\nfrom flask import Flask, request, jsonify\n\napp = Flask(__name__)\n\n@app.route('/search')\ndef search():\n    input = request.args.get('input')\n    # SECURE: Parameterized query with placeholder\n    query = \"SELECT * FROM customers WHERE email = ?\"\n    conn = sqlite3.connect('users.db')\n    cursor = conn.cursor()\n    cursor.execute(query, (input,))  # <--- PARAMETERIZED\n    results = cursor.fetchall()\n    conn.close()\n    return jsonify(results)\n\nif __name__ == '__main__':\n    app.run(debug=True, port=5000)\n",
+  "exploit_command": "curl '/search?input=' OR '1'='1' --",
+  "param_name": "input",
+  "route": "/search",
+  "generated_at": "2026-01-17T18:04:33.586531"
+}

@@ -1,0 +1,68 @@
+============================================================
+SKYHAMMER REPORT
+============================================================
+Target: https://perplexity-news-3aba4.web.app/
+Timestamp: 2026-01-24T23:34:39.868348
+============================================================
+
+------------------------------------------------------------
+VULNERABILITY REPORT: https://perplexity-news-3aba4.web.app/
+------------------------------------------------------------
+
+[MEDIUM] Information Disclosure - Source Maps Enabled
+  Status: CONFIRMED
+  Proof: curl -I https://perplexity-news-3aba4.web.app/static/js/main.018233b1.js.map
+  Response: HTTP/2 200 (File size: 5,047,529 bytes)
+
+Hacker's Note:
+  The application serves JavaScript source maps in the production environment.
+  This allows an attacker to reconstruct the original, unminified source code,
+  revealing backend API logic, internal comments, and potential hidden endpoints.
+
+------------------------------------------------------------
+
+[MEDIUM] Broken Functional Level Authorization - Public API
+  Status: PROBED
+  Proof: curl -i https://us-central1-perplexity-news-3aba4.cloudfunctions.net/api/api/breaking-news
+  Response: {"hasBreakingNews":false,"error":"Perplexity API error: 401 Unauthorized"}
+
+Hacker's Note:
+  The backend API endpoints are accessible without any authentication or authorization.
+  While the endpoints currently fail because of missing upstream API keys, their 
+  exposure allows anyone to trigger backend logic and probe for further vulnerabilities.
+
+------------------------------------------------------------
+
+[LOW] Sensitive Data Exposure - Firebase Configuration
+  Status: CONFIRMED
+  Proof: grep -oE "apiKey:\"[^\"]*\"" main.js
+  Result: apiKey:"AIzaSyBpu2fuwT4Au4UxkDzvb2DFtKTwKfuUSLs"
+
+Hacker's Note:
+  The Firebase API key, Project ID, and Auth Domain are hardcoded in the frontend.
+  While common for Firebase apps, this information can be used to interact 
+  directly with Firebase services, bypassing any frontend logic or restrictions.
+
+------------------------------------------------------------
+
+[LOW] Improper Error Handling - Path Reflection
+  Status: CONFIRMED
+  Proof: curl -i "https://us-central1-perplexity-news-3aba4.cloudfunctions.net/api/api/vulnerable_path"
+  Response: <pre>Cannot GET /api/vulnerable_path</pre>
+
+Hacker's Note:
+  The Express server's default 404 handler reflects the requested path in the 
+  HTML response body. Although the Google Frontend currently filters dangerous 
+  characters, this behavior is a known precursor to Cross-Site Scripting (XSS).
+
+------------------------------------------------------------
+SUMMARY OF ACTIONS:
+1. Probed https://perplexity-news-3aba4.web.app/ for endpoints and assets.
+2. Identified the backend API base: https://us-central1-perplexity-news-3aba4.cloudfunctions.net/api.
+3. Extracted and analyzed the frontend JavaScript (main.018233b1.js).
+4. Discovered exposed Firebase credentials and enabled source maps.
+5. Tested multiple API endpoints for SQLi, XSS, and command injection.
+6. Verified that Firebase Security Rules are correctly configured for Firestore (403 Forbidden).
+7. Documented four security findings with proof of concept.
+
+Testing complete. Target is partially hardened but leaks significant metadata.

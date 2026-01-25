@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-SkyHammer - Gemini-Powered Security & Coding CLI
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  SKYHAMMER // GEMINI-CODE                                                       ║
+║  Evangelion/Cyberpunk Aesthetics for Autonomous Security                      ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
 
 An autonomous AI system for security testing, code generation, and remediation.
 Features:
@@ -38,10 +41,28 @@ try:
     from rich.text import Text
     from rich.table import Table
     from rich import box
+    from rich.style import Style
+    from rich.spinner import Spinner
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    from rich.layout import Layout
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
-    print("Install rich & questionary: pip install rich questionary")
+    print("CRITICAL ERROR: SYSTEM DEPENDENCIES MISSING.")
+    print("RUN: pip install rich questionary")
+    sys.exit(1)
+
+# =============================================================================
+# THEME CONFIGURATION (EVANGELION / CYBERPUNK NEON)
+# =============================================================================
+# Color palette inspired by Neon Genesis Evangelion + Cyberpunk aesthetics
+C_PRIMARY = "bold yellow"       # Main warnings / headers (NERV UI panels)
+C_SECONDARY = "cyan"            # Information / borders / accents
+C_ACCENT = "bold orange1"       # Critical alerts / attention items
+C_SUCCESS = "bold green"        # Operations success / patched code
+C_ERROR = "bold red"            # Failures / Attacks / vulnerabilities
+C_DIM = "dim white"             # Background info / timestamps
+C_HIGHLIGHT = "black on yellow" # High contrast highlight (Evangelion style)
 
 # Load API Key
 try:
@@ -50,10 +71,57 @@ except ImportError:
     GDM_API_KEY = os.environ.get("GDM_API_KEY", "")
 
 if not GDM_API_KEY:
-    print("[!] Error: GDM_API_KEY not found")
+    print("[!] FATAL: NEURAL LINK SEVERED (GDM_API_KEY missing)")
+    print("    Set GDM_API_KEY in secretsConfig.py or environment")
     sys.exit(1)
 
 console = Console() if HAS_RICH else None
+
+# =============================================================================
+# NERV-STYLE UI FUNCTIONS
+# =============================================================================
+
+def print_banner():
+    """Display the Main System Banner - NERV/Evangelion Style"""
+    if not console:
+        return
+
+    grid = Table.grid(expand=True)
+    grid.add_column(justify="center", ratio=1)
+    grid.add_row(
+        Panel(
+            Text(" SYSTEM ONLINE // GEMINI-CODE INTERFACE ", justify="center", style="bold black on yellow"),
+            style="bold yellow",
+            border_style="yellow",
+            box=box.HEAVY,
+        )
+    )
+    console.print(grid)
+    console.print(f"[{C_DIM}]:: NEURAL LINK ESTABLISHED :: MODEL: {CURRENT_MODEL} ::[/{C_DIM}]", justify="center")
+    console.print()
+
+
+def print_skyhammer_banner():
+    """Display the SkyHammer Activation Banner - Red Alert Style"""
+    if not console:
+        return
+
+    console.print()
+    grid = Table.grid(expand=True)
+    grid.add_column(justify="center", ratio=1)
+    grid.add_row(
+        Panel(
+            Text(" ⚠ WARNING: SKYHAMMER PROTOCOL ENGAGED ⚠ ", justify="center", style="bold white on red"),
+            subtitle="[ OFFENSIVE SECURITY AUTHORIZED ]",
+            style="bold red",
+            border_style="bold red",
+            box=box.DOUBLE,
+            padding=(1, 2)
+        )
+    )
+    console.print(grid)
+    console.print(f"[{C_ACCENT}]>> SCANNING MODULES: ACTIVE | EXPLOIT ENGINE: ONLINE | PATCHER: READY <<[/{C_ACCENT}]", justify="center")
+    console.print()
 
 # Initialize client
 client = OpenAI(api_key=GDM_API_KEY, base_url="https://api.x.ai/v1")
@@ -232,7 +300,7 @@ def init_logging():
     })
 
     if console:
-        console.print(f"[dim]Logging to: {RUN_DIR}[/]")
+        console.print(f"[{C_DIM}]SESSION LOG: {RUN_DIR}[/{C_DIM}]")
 
 
 def log_event(event_type: str, data: Dict[str, Any]):
@@ -304,28 +372,28 @@ def set_task_status(status: str, tasks: List[str] = None):
 
 
 def show_goals():
-    """Display current goals/tasks"""
+    """Display current goals/tasks - NERV Mission Status"""
     if not console:
         return
 
     if not CURRENT_TASKS and CURRENT_TASK_STATUS == "idle":
-        console.print("[dim]No active tasks. Give Gemini something to do![/]")
+        console.print(f"[{C_DIM}]>> NO ACTIVE MISSIONS. Awaiting orders. <<[/{C_DIM}]")
         return
 
     status_colors = {
-        "idle": "dim",
-        "thinking": "yellow",
-        "executing": "cyan",
-        "done": "green"
+        "idle": C_DIM,
+        "thinking": C_PRIMARY,
+        "executing": C_SECONDARY,
+        "done": C_SUCCESS
     }
     color = status_colors.get(CURRENT_TASK_STATUS, "white")
 
-    console.print(f"\n[bold]Current Status:[/] [{color}]{CURRENT_TASK_STATUS.upper()}[/]")
+    console.print(f"\n[{C_PRIMARY}]:: MISSION STATUS ::[/{C_PRIMARY}] [{color}]{CURRENT_TASK_STATUS.upper()}[/{color}]")
 
     if CURRENT_TASKS:
-        console.print("[bold]Tasks:[/]")
+        console.print(f"[{C_PRIMARY}]ACTIVE OBJECTIVES:[/{C_PRIMARY}]")
         for i, task in enumerate(CURRENT_TASKS, 1):
-            console.print(f"  {i}. {task}")
+            console.print(f"  [{C_SECONDARY}]{i}.[/{C_SECONDARY}] {task}")
     console.print()
 
 
@@ -345,76 +413,96 @@ def stop_interrupt_listener():
 
 
 def show_diff(old_content: str, new_content: str, filename: str):
-    """Show side-by-side diff with color highlighting - FULL content"""
-    from rich.table import Table
-    from rich.syntax import Syntax
-    from rich.panel import Panel
-
-    if old_content == new_content:
-        console.print("[dim]No changes[/]")
+    """
+    Evangelion-style split-pane diff view.
+    Shows side-by-side comparison with NERV UI aesthetics.
+    """
+    if not console:
         return
 
-    # Determine language
+    console.print(f"\n[{C_PRIMARY}]:: DETECTED FILE MODIFICATION :: {filename}[/{C_PRIMARY}]")
+
+    if old_content == new_content:
+        console.print(f"[{C_DIM}]>> No logical changes detected.[/{C_DIM}]")
+        return
+
+    # Determine syntax language
     ext = filename.split('.')[-1] if '.' in filename else 'python'
-    lang = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'rb': 'ruby', 'php': 'php'}.get(ext, ext)
+    lang_map = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'sh': 'bash', 'md': 'markdown', 'rb': 'ruby', 'php': 'php'}
+    lang = lang_map.get(ext, ext)
 
-    # Show BEFORE panel
-    console.print(f"\n[bold bright_red]BEFORE (Original): {filename}[/]")
+    # Create split-pane layout table
+    layout = Table(show_header=True, header_style="bold white", box=box.ROUNDED, expand=True, border_style="yellow")
+    layout.add_column(f"[{C_ERROR}]◄ ORIGINAL[/{C_ERROR}] // {filename}", style="dim red", ratio=1)
+    layout.add_column(f"[{C_SUCCESS}]PROPOSED PATCH ►[/{C_SUCCESS}] // {filename}", style="dim green", ratio=1)
+
+    # Render Syntax blocks side by side
     try:
-        old_syntax = Syntax(old_content, lang, line_numbers=True, word_wrap=True, theme="monokai")
-        console.print(Panel(old_syntax, border_style="red"))
+        syntax_old = Syntax(old_content, lang, theme="monokai", line_numbers=True, word_wrap=True)
+        syntax_new = Syntax(new_content, lang, theme="monokai", line_numbers=True, word_wrap=True)
+        layout.add_row(syntax_old, syntax_new)
     except:
-        console.print(Panel(old_content, border_style="red"))
+        layout.add_row(old_content, new_content)
 
-    # Show AFTER panel
-    console.print(f"\n[bold bright_green]AFTER (Patched): {filename}[/]")
-    try:
-        new_syntax = Syntax(new_content, lang, line_numbers=True, word_wrap=True, theme="monokai")
-        console.print(Panel(new_syntax, border_style="green"))
-    except:
-        console.print(Panel(new_content, border_style="green"))
+    console.print(layout)
 
-    # Show unified diff for quick reference
+    # Unified Diff (The "Hacker" View) - Delta Analysis
+    console.print(f"\n[{C_SECONDARY}]:: DELTA ANALYSIS ::[/{C_SECONDARY}]")
+
     old_lines = old_content.splitlines()
     new_lines = new_content.splitlines()
-    diff = list(difflib.unified_diff(old_lines, new_lines, lineterm=''))
+    diff_lines = list(difflib.unified_diff(old_lines, new_lines, lineterm=''))
 
-    if diff:
-        console.print("\n[bold]Summary of changes:[/]")
-        for line in diff[2:]:  # Skip headers, show ALL changes
-            if line.startswith('+'):
-                console.print(f"[bright_green]{line}[/]")
+    if diff_lines:
+        diff_table = Table(box=box.SIMPLE, show_header=False, show_edge=False, border_style="dim blue")
+        diff_table.add_column("Line")
+
+        for line in diff_lines[2:]:  # Skip headers
+            if line.startswith('@@'):
+                diff_table.add_row(Text(line, style="bold blue"))
+            elif line.startswith('+'):
+                diff_table.add_row(Text(line, style=f"bold {C_SUCCESS} on black"))
             elif line.startswith('-'):
-                console.print(f"[bright_red]{line}[/]")
-            elif line.startswith('@@'):
-                console.print(f"[yellow]{line}[/]")
+                diff_table.add_row(Text(line, style=f"strike dim red"))
+            # Skip context lines to keep UI clean
+
+        console.print(Panel(diff_table, border_style="dim blue", title="[Change Manifest]", title_align="left"))
     console.print()
 
 
 def show_new_file_preview(content: str, filename: str):
-    """Show new file with green highlighting - FULL content"""
-    from rich.syntax import Syntax
-    from rich.panel import Panel
+    """Show new file with Evangelion-style green panel - FULL content"""
+    if not console:
+        return
 
-    console.print(f"\n[bold bright_green]New file: {filename}[/]")
+    console.print(f"\n[{C_PRIMARY}]:: NEW FILE CREATION :: {filename}[/{C_PRIMARY}]")
 
     # Determine language for syntax highlighting
     ext = filename.split('.')[-1] if '.' in filename else 'python'
-    lang = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'rb': 'ruby', 'php': 'php'}.get(ext, ext)
+    lang_map = {'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'sh': 'bash', 'md': 'markdown', 'rb': 'ruby', 'php': 'php'}
+    lang = lang_map.get(ext, ext)
 
     try:
         syntax = Syntax(content, lang, line_numbers=True, word_wrap=True, theme="monokai")
-        console.print(Panel(syntax, title=f"[green]+ {filename}[/]", border_style="green"))
+        console.print(Panel(
+            syntax,
+            title=f"[{C_SUCCESS}]+ NEW FILE: {filename}[/{C_SUCCESS}]",
+            border_style="green",
+            box=box.ROUNDED
+        ))
     except:
         # Fallback to plain text
         lines = content.splitlines()
         for i, line in enumerate(lines, 1):
-            console.print(f"[bright_green]+{i:3}| {line}[/]")
+            console.print(f"[{C_SUCCESS}]+{i:3}| {line}[/{C_SUCCESS}]")
     console.print()
 
 
 def ask_permission(tool_name: str, args: Dict[str, Any], preview_content: str = "") -> tuple:
-    """Ask user permission. Returns (action, feedback) where action is 'yes', 'no', 'yes_all', or 'feedback'"""
+    """
+    Evangelion-style Permission Prompt.
+    Returns (action, feedback) where action is 'yes', 'no', 'yes_all', or 'feedback'
+    """
     global AUTO_APPROVE
 
     if AUTO_APPROVE:
@@ -424,7 +512,8 @@ def ask_permission(tool_name: str, args: Dict[str, Any], preview_content: str = 
     pause_listener()
 
     try:
-        console.print(f"\n[bold yellow]⚡ {tool_name}[/]")
+        # Visual separation - NERV intervention style
+        console.print(f"\n[{C_ACCENT}]>> INTERVENTION REQUIRED: {tool_name.upper()} <<[/{C_ACCENT}]")
 
         # Show preview based on tool
         if tool_name == "write_file":
@@ -439,32 +528,56 @@ def ask_permission(tool_name: str, args: Dict[str, Any], preview_content: str = 
                 show_new_file_preview(content, path)
 
         elif tool_name == "run_command":
-            console.print(f"[cyan]$ {args.get('command', '')}[/]")
+            cmd = args.get('command', '')
+            console.print(Panel(
+                f"$ {cmd}",
+                title="[bold yellow]EXECUTE SHELL[/]",
+                border_style="yellow",
+                style="bold yellow"
+            ))
 
         else:
-            console.print(f"[dim]{json.dumps(args)[:200]}[/]")
+            console.print(f"[{C_DIM}]{json.dumps(args)[:200]}[/{C_DIM}]")
 
-        # Ask
+        # Questionary Prompt with Evangelion/Cyberpunk styling
+        eva_style = questionary.Style([
+            ('qmark', 'fg:yellow bold'),
+            ('question', 'fg:yellow bold'),
+            ('answer', 'fg:cyan bold'),
+            ('pointer', 'fg:cyan bold'),
+            ('highlighted', 'fg:cyan bold'),
+            ('selected', 'fg:cyan bold'),
+            ('separator', 'fg:black'),
+            ('instruction', 'fg:black'),
+        ])
+
         choice = questionary.select(
-            "Allow?",
-            choices=["Yes", "Yes to all (session)", "No (skip)", "Tell Gemini to do otherwise"],
-            style=questionary.Style([('selected', 'fg:cyan bold')])
+            "AUTHORIZE ACTION?",
+            choices=[
+                "EXECUTE",
+                "EXECUTE ALL (Session Override)",
+                "DENY",
+                "REVISE (Provide Instructions)"
+            ],
+            style=eva_style,
+            pointer=">"
         ).ask()
 
         if not choice:
             return ("no", None)
-        if "Yes to all" in choice:
+        if choice == "EXECUTE":
+            return ("yes", None)
+        if "EXECUTE ALL" in choice:
             AUTO_APPROVE = True
             return ("yes", None)
-        if "Yes" == choice:
-            return ("yes", None)
-        if "otherwise" in choice.lower():
+        if "REVISE" in choice:
             feedback = questionary.text(
-                "What should Gemini do differently?",
-                style=questionary.Style([('answer', 'fg:yellow')])
+                "TACTICAL ADJUSTMENT:",
+                style=eva_style
             ).ask()
             return ("feedback", feedback)
         return ("no", None)
+
     finally:
         # Resume ESC listener
         resume_listener()
@@ -496,7 +609,7 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
                 with open(path, "r") as f:
                     content = f.read()
                 if console:
-                    console.print(f"[green]✓ Read {len(content)} bytes from {path}[/]")
+                    console.print(f"[{C_DIM}]< READ: {os.path.basename(path)} ({len(content)} bytes) >[/{C_DIM}]")
                 result = f"Contents of {path}:\n```\n{content[:3000]}\n```"
                 log_tool_call(name, args, result, (time.time() - start_time) * 1000)
                 return result
@@ -533,14 +646,14 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
                 with open(path + ".bak", "w") as f:
                     f.write(FILE_BACKUPS[path])
                 if console:
-                    console.print(f"[dim]💾 Backup saved: {path}.bak[/]")
+                    console.print(f"[{C_DIM}]💾 BACKUP CREATED: {path}.bak[/{C_DIM}]")
 
             # Create parent directories if needed
             os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
             with open(path, "w") as f:
                 f.write(content)
             if console:
-                console.print(f"[green]✓ Wrote {len(content)} bytes to {args.get('path', path)}[/]")
+                console.print(f"[{C_SUCCESS}]✓ WRITE CONFIRMED: {os.path.basename(args.get('path', path))}[/{C_SUCCESS}]")
             result = f"SUCCESS: Wrote {len(content)} bytes to {args.get('path', path)}"
             log_tool_call(name, args, result, (time.time() - start_time) * 1000)
             return result
@@ -572,14 +685,22 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
                 log_tool_call(name, args, result, (time.time() - start_time) * 1000)
                 return result
             if console:
-                console.print(f"[yellow]$ {command}[/]")
+                console.print(f"[{C_SECONDARY}]>> EXECUTING: {command}[/{C_SECONDARY}]")
             proc_result = subprocess.run(
                 command, shell=True, capture_output=True, text=True,
                 timeout=120, cwd=WORKSPACE_DIR
             )
             output = proc_result.stdout + proc_result.stderr
-            if console:
-                console.print(f"[green]✓ Exit code: {proc_result.returncode}[/]")
+            # Styled Output Panel
+            if console and (proc_result.stdout or proc_result.stderr):
+                out_panel = Panel(
+                    output[:2000] if len(output) > 2000 else output,
+                    title=f"EXIT CODE: {proc_result.returncode}",
+                    border_style="green" if proc_result.returncode == 0 else "red"
+                )
+                console.print(out_panel)
+            elif console:
+                console.print(f"[{C_DIM}](No output)[/{C_DIM}]")
             result = f"Command output (exit {proc_result.returncode}):\n```\n{output[:2000]}\n```"
             log_tool_call(name, args, result, (time.time() - start_time) * 1000)
             return result
@@ -649,7 +770,7 @@ def get_codebase_context() -> str:
 
 
 def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
-    """Run agentic chat completion - loops until Gemini is done or max iterations"""
+    """Run agentic chat completion with cyberpunk spinner - loops until Gemini is done or max iterations"""
     global CURRENT_MODEL, SKYHAMMER_MODE, INTERRUPT_REQUESTED
     model_id = CURRENT_MODEL
     max_iterations = 25  # Safety limit
@@ -668,7 +789,7 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
 
     # Ctrl+C can be used to interrupt
     if console:
-        console.print("[dim](Press Ctrl+C to interrupt, /goals to see tasks)[/]")
+        console.print(f"[{C_DIM}](Press Ctrl+C to interrupt, /goals to see tasks)[/{C_DIM}]")
 
     set_task_status("thinking")
 
@@ -682,18 +803,27 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
                 return "(Interrupted by user)"
 
             set_task_status("thinking")
-            kwargs = {
-                "model": model_id,
-                "messages": messages,
-                "temperature": 0.3,
-                "max_tokens": 4096,
-            }
-            if active_tools:
-                kwargs["tools"] = active_tools
-                kwargs["tool_choice"] = "auto"
 
-            response = client.chat.completions.create(**kwargs)
-            msg = response.choices[0].message
+            # Cyberpunk Spinner for API calls
+            with Progress(
+                SpinnerColumn(spinner_name="dots12", style="bold yellow"),
+                TextColumn(f"[{C_PRIMARY}]{{task.description}}[/{C_PRIMARY}]"),
+                transient=True
+            ) as progress:
+                task_id = progress.add_task(f"SYNCING WITH NEURAL NETWORK [CYCLE {iteration}]...", total=None)
+
+                kwargs = {
+                    "model": model_id,
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 4096,
+                }
+                if active_tools:
+                    kwargs["tools"] = active_tools
+                    kwargs["tool_choice"] = "auto"
+
+                response = client.chat.completions.create(**kwargs)
+                msg = response.choices[0].message
 
             # Log API call
             tool_call_names = [tc.function.name for tc in msg.tool_calls] if msg.tool_calls else []
@@ -715,7 +845,7 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
 
             # Process tool calls
             if console:
-                console.print(f"[dim]Turn {iteration}: {len(msg.tool_calls)} tool calls[/]")
+                console.print(f"[{C_DIM}]>> CYCLE {iteration}: {len(msg.tool_calls)} TOOL CALLS <<[/{C_DIM}]")
 
             tool_results = []
             for tc in msg.tool_calls:
@@ -730,7 +860,7 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
                     tool_args = {}
 
                 if console:
-                    console.print(f"[cyan]→ {tool_name}[/]")
+                    console.print(f"[{C_SECONDARY}]→ {tool_name}[/{C_SECONDARY}]")
 
                 result = execute_tool(tool_name, tool_args)
                 tool_results.append({
@@ -752,17 +882,17 @@ def chat_completion(messages: List[Dict], use_tools: bool = True) -> str:
 
             # Show intermediate thoughts if any
             if msg.content and console:
-                console.print(f"[dim italic]{msg.content[:200]}...[/]" if len(msg.content or "") > 200 else f"[dim italic]{msg.content}[/]")
+                console.print(f"[{C_DIM} italic]{msg.content[:200]}...[/{C_DIM}]" if len(msg.content or "") > 200 else f"[{C_DIM} italic]{msg.content}[/{C_DIM}]")
 
         return "(Max iterations reached - use /clear to reset)"
 
     except KeyboardInterrupt:
-        console.print("\n[bold yellow]⚠ Interrupted by Ctrl+C[/]")
+        console.print(f"\n[{C_ACCENT}]>> INTERRUPT SIGNAL RECEIVED <<[/{C_ACCENT}]")
         return "(Interrupted by user)"
 
 
 def interactive_mode():
-    """Run interactive chat mode"""
+    """Run interactive chat mode with Evangelion/Cyberpunk UI"""
     global CURRENT_MODEL, SKYHAMMER_MODE, WORKSPACE_DIR, AUTO_APPROVE, client, GDM_API_KEY
 
     if not console:
@@ -772,17 +902,14 @@ def interactive_mode():
     # Initialize logging
     init_logging()
 
-    console.print("\n[bold cyan]╔══════════════════════════════════════════════════════════╗[/]")
-    console.print("[bold cyan]║             Gemini Code - Powered by GDM                    ║[/]")
-    console.print("[bold cyan]╚══════════════════════════════════════════════════════════╝[/]")
-    console.print()
+    # Display NERV-style banner
+    print_banner()
 
-    skyhammer_status = "[bold red]OFF[/]" if not SKYHAMMER_MODE else "[bold green]ON[/]"
-    auto_status = "[yellow]ON[/]" if AUTO_APPROVE else "[dim]OFF[/]"
-    console.print(f"[dim]Commands: /help, /auto, /workspace, /skyhammer, /model, /clear, /exit[/]")
-    console.print(f"[dim]Bash mode: !command (e.g. !ls, !pwd, !python app.py &)[/]")
-    console.print(f"[dim]Model: {CURRENT_MODEL} | Auto-approve: {auto_status}[/]")
-    console.print(f"[dim]Workspace: {WORKSPACE_DIR}[/]")
+    auto_status = f"[{C_PRIMARY}]ON[/{C_PRIMARY}]" if AUTO_APPROVE else f"[{C_DIM}]OFF[/{C_DIM}]"
+    console.print(f"[{C_DIM}]COMMANDS: /help, /auto, /workspace, /skyhammer, /model, /clear, /exit[/{C_DIM}]")
+    console.print(f"[{C_DIM}]BASH MODE: !command (e.g. !ls, !pwd, !python app.py &)[/{C_DIM}]")
+    console.print(f"[{C_DIM}]MODEL: {CURRENT_MODEL} | AUTO-APPROVE: {auto_status}[/{C_DIM}]")
+    console.print(f"[{C_DIM}]WORKSPACE: {WORKSPACE_DIR}[/{C_DIM}]")
     console.print()
 
     # Build system prompt with context
@@ -891,11 +1018,25 @@ REMEMBER: NO MARKDOWN - plain text with box characters only!"""
 
     messages = [{"role": "system", "content": system_prompt}]
 
+    # Evangelion-style questionary theme
+    eva_style = questionary.Style([
+        ('qmark', 'fg:yellow bold'),
+        ('question', 'fg:yellow bold'),
+        ('answer', 'fg:yellow bold'),
+        ('pointer', 'fg:cyan bold'),
+        ('highlighted', 'fg:cyan bold'),
+        ('selected', 'fg:cyan bold'),
+    ])
+
     while True:
         try:
+            # NERV-style prompt
+            console.print(f"\n[{C_PRIMARY}]┌──( GEMINI@SKYHAMMER )-[{C_SECONDARY}]{os.path.basename(WORKSPACE_DIR)}[/{C_SECONDARY}][/{C_PRIMARY}]")
+
             user_input = questionary.text(
-                "You >",
-                style=questionary.Style([('answer', 'fg:cyan')])
+                "└─>",
+                qmark="",
+                style=eva_style
             ).ask()
 
             if not user_input:
@@ -905,20 +1046,20 @@ REMEMBER: NO MARKDOWN - plain text with box characters only!"""
             if user_input.startswith("!"):
                 bash_cmd = user_input[1:].strip()
                 if bash_cmd:
-                    console.print(f"[dim]$ {bash_cmd}[/]")
+                    console.print(f"[{C_DIM}]$ {bash_cmd}[/{C_DIM}]")
                     try:
                         result = subprocess.run(
                             bash_cmd, shell=True, capture_output=True, text=True, timeout=60
                         )
                         output = result.stdout + result.stderr
                         if output.strip():
-                            console.print(Panel(output[:3000], title="Output", border_style="blue"))
+                            console.print(Panel(output[:3000], title="SHELL OUTPUT", border_style="cyan"))
                         else:
-                            console.print("[dim](no output)[/]")
+                            console.print(f"[{C_DIM}](no output)[/{C_DIM}]")
                     except subprocess.TimeoutExpired:
-                        console.print("[red]Command timed out (60s)[/]")
+                        console.print(f"[{C_ERROR}]TIMEOUT: Command exceeded 60s limit[/{C_ERROR}]")
                     except Exception as e:
-                        console.print(f"[red]Error: {e}[/]")
+                        console.print(f"[{C_ERROR}]ERROR: {e}[/{C_ERROR}]")
                 continue
 
             # Handle commands
@@ -926,13 +1067,13 @@ REMEMBER: NO MARKDOWN - plain text with box characters only!"""
                 cmd = user_input.lower().strip()
 
                 if cmd == "/exit" or cmd == "/quit":
-                    console.print("[yellow]Goodbye![/]")
+                    console.print(f"\n[{C_ACCENT}]:: TERMINATING LINK :: GOODBYE ::[/{C_ACCENT}]")
                     break
 
                 elif cmd == "/clear":
                     messages = [{"role": "system", "content": system_prompt}]
                     set_task_status("idle", [])
-                    console.print("[dim]Conversation cleared.[/]")
+                    console.print(f"[{C_DIM}]>> MEMORY BANKS CLEARED <<[/{C_DIM}]")
                     continue
 
                 elif cmd == "/goals" or cmd == "/tasks":
@@ -941,11 +1082,11 @@ REMEMBER: NO MARKDOWN - plain text with box characters only!"""
 
                 elif cmd == "/undo" or cmd == "/rollback":
                     if not FILE_BACKUPS:
-                        console.print("[yellow]No backups available to restore.[/]")
+                        console.print(f"[{C_ACCENT}]>> NO RESTORATION POINTS AVAILABLE <<[/{C_ACCENT}]")
                         continue
 
                     # Show available backups
-                    console.print("\n[bold]Available backups:[/]")
+                    console.print(f"\n[{C_PRIMARY}]AVAILABLE RESTORATION POINTS:[/{C_PRIMARY}]")
                     backup_list = list(FILE_BACKUPS.keys())
                     for i, path in enumerate(backup_list, 1):
                         console.print(f"  {i}. {path}")
@@ -955,34 +1096,35 @@ REMEMBER: NO MARKDOWN - plain text with box characters only!"""
                         path = backup_list[0]
                         with open(path, "w") as f:
                             f.write(FILE_BACKUPS[path])
-                        console.print(f"\n[green]✓ Restored {path} to original state[/]")
+                        console.print(f"\n[{C_SUCCESS}]>> SYSTEM RESTORED: {os.path.basename(path)} <<[/{C_SUCCESS}]")
                         del FILE_BACKUPS[path]
                         # Remove .bak file
                         if os.path.exists(path + ".bak"):
                             os.remove(path + ".bak")
                     else:
                         choice = questionary.select(
-                            "Which file to restore?",
-                            choices=[os.path.basename(p) for p in backup_list] + ["All files", "Cancel"]
+                            "SELECT RESTORATION TARGET:",
+                            choices=[os.path.basename(p) for p in backup_list] + ["ALL FILES", "CANCEL"],
+                            style=eva_style
                         ).ask()
-                        if choice == "Cancel" or not choice:
+                        if choice == "CANCEL" or not choice:
                             continue
-                        elif choice == "All files":
+                        elif choice == "ALL FILES":
                             for path in backup_list:
                                 with open(path, "w") as f:
                                     f.write(FILE_BACKUPS[path])
-                                console.print(f"[green]✓ Restored {path}[/]")
+                                console.print(f"[{C_SUCCESS}]✓ RESTORED: {path}[/{C_SUCCESS}]")
                                 if os.path.exists(path + ".bak"):
                                     os.remove(path + ".bak")
                             FILE_BACKUPS.clear()
-                            console.print("[green]All files restored![/]")
+                            console.print(f"[{C_SUCCESS}]>> ALL SYSTEMS RESTORED <<[/{C_SUCCESS}]")
                         else:
                             # Find the full path
                             for path in backup_list:
                                 if os.path.basename(path) == choice:
                                     with open(path, "w") as f:
                                         f.write(FILE_BACKUPS[path])
-                                    console.print(f"[green]✓ Restored {path}[/]")
+                                    console.print(f"[{C_SUCCESS}]✓ RESTORED: {path}[/{C_SUCCESS}]")
                                     del FILE_BACKUPS[path]
                                     if os.path.exists(path + ".bak"):
                                         os.remove(path + ".bak")
@@ -993,14 +1135,14 @@ REMEMBER: NO MARKDOWN - plain text with box characters only!"""
                     # Check if gh CLI is available
                     gh_check = subprocess.run("which gh", shell=True, capture_output=True, text=True)
                     if gh_check.returncode != 0:
-                        console.print("[red]GitHub CLI (gh) not installed.[/]")
-                        console.print("[dim]Install with: brew install gh[/]")
+                        console.print(f"[{C_ERROR}]GITHUB CLI (gh) NOT DETECTED[/{C_ERROR}]")
+                        console.print(f"[{C_DIM}]Install with: brew install gh[/{C_DIM}]")
                         continue
 
                     # Check if in git repo
                     git_check = subprocess.run("git status", shell=True, capture_output=True, text=True, cwd=WORKSPACE_DIR)
                     if git_check.returncode != 0:
-                        console.print("[red]Not in a git repository.[/]")
+                        console.print(f"[{C_ERROR}]NOT IN A GIT REPOSITORY[/{C_ERROR}]")
                         continue
 
                     # Get PR title
@@ -1008,15 +1150,16 @@ REMEMBER: NO MARKDOWN - plain text with box characters only!"""
                         pr_title = cmd[4:].strip()
                     else:
                         pr_title = questionary.text(
-                            "PR Title:",
-                            default="Security Fix: Patched vulnerabilities"
+                            "PR TITLE:",
+                            default="Security Fix: Patched vulnerabilities",
+                            style=eva_style
                         ).ask()
                         if not pr_title:
                             continue
 
                     # Create branch and PR
                     branch_name = f"security-fix-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-                    console.print(f"[cyan]Creating branch: {branch_name}[/]")
+                    console.print(f"[{C_SECONDARY}]>> CREATING BRANCH: {branch_name} <<[/{C_SECONDARY}]")
 
                     cmds = [
                         f"git checkout -b {branch_name}",
@@ -1027,57 +1170,57 @@ REMEMBER: NO MARKDOWN - plain text with box characters only!"""
                     ]
 
                     for c in cmds:
-                        console.print(f"[dim]$ {c}[/]")
+                        console.print(f"[{C_DIM}]$ {c}[/{C_DIM}]")
                         result = subprocess.run(c, shell=True, capture_output=True, text=True, cwd=WORKSPACE_DIR)
                         if result.returncode != 0 and "nothing to commit" not in result.stderr:
-                            console.print(f"[red]Error: {result.stderr}[/]")
+                            console.print(f"[{C_ERROR}]ERROR: {result.stderr}[/{C_ERROR}]")
                             break
                         if result.stdout:
                             console.print(result.stdout)
 
-                    console.print("[green]✓ Pull request created![/]")
+                    console.print(f"[{C_SUCCESS}]✓ PULL REQUEST CREATED[/{C_SUCCESS}]")
                     continue
 
                 elif cmd == "/help":
-                    console.print(Panel(f"""
-[bold]Commands:[/]
-  /help           - Show this help
-  /goals          - Show current tasks Gemini is working on
-  /undo           - Rollback last file change (safety feature)
-  /pr [title]     - Create GitHub PR with security fixes
-  /workspace PATH - Change sandbox directory (current: {WORKSPACE_DIR})
-  /skyhammer      - Toggle SkyHammer security mode
-  /auto           - Toggle auto-approve (skip permission prompts)
+                    help_text = f"""
+[{C_PRIMARY}]SYSTEM COMMANDS:[/{C_PRIMARY}]
+  /help           - Display this help panel
+  /goals          - Show current tasks in progress
+  /undo           - Rollback last file modification
+  /pr [title]     - Create GitHub Pull Request
+  /workspace PATH - Change workspace (current: {WORKSPACE_DIR})
+  /skyhammer      - Toggle SKYHAMMER security mode
+  /auto           - Toggle auto-approve mode
   /model          - Switch between Gemini models
-  /clear          - Clear conversation
-  /exit           - Exit
+  /clear          - Clear conversation memory
+  /exit           - Terminate session
 
-[bold]Bash Mode (!):[/]
+[{C_PRIMARY}]BASH MODE (!):[/{C_PRIMARY}]
   !pwd            - Print working directory
   !ls -la         - List files
   !python app.py  - Run a script
 
-[bold]Interrupt:[/]
-  Ctrl+C          - Stop Gemini mid-workflow
+[{C_PRIMARY}]INTERRUPT:[/{C_PRIMARY}]
+  Ctrl+C          - Emergency stop mid-workflow
 
-[bold]Safety Features:[/]
-  - Side-by-side diff before changes
+[{C_PRIMARY}]SAFETY PROTOCOLS:[/{C_PRIMARY}]
+  - Split-pane diff visualization
   - Auto-backup of modified files (.bak)
-  - /undo to instantly rollback
+  - /undo for instant rollback
   - Permission prompts for all actions
 
-[bold]Permission Prompts:[/]
-  - Yes           - Allow this action
-  - Yes to all    - Auto-approve session
-  - No            - Skip this action
-  - Tell Gemini...  - Give different instructions
+[{C_PRIMARY}]AUTHORIZATION OPTIONS:[/{C_PRIMARY}]
+  - EXECUTE       - Allow this action
+  - EXECUTE ALL   - Auto-approve session
+  - DENY          - Skip this action
+  - REVISE        - Provide new instructions
 
-[bold]Security Mode (/skyhammer):[/]
+[{C_PRIMARY}]SKYHAMMER PROTOCOL:[/{C_PRIMARY}]
   - Auto-scans for vulnerabilities
   - Runs actual exploit tests
   - Generates security reports
-  - Creates patches with /pr
-                    """, title="Gemini Code Help", border_style="cyan"))
+  - Creates patches with /pr"""
+                    console.print(Panel(help_text, title=f"[{C_HIGHLIGHT}] GEMINI-CODE MANUAL [/{C_HIGHLIGHT}]", border_style="yellow", box=box.DOUBLE))
                     continue
 
                 elif cmd.startswith("/workspace"):
@@ -1087,47 +1230,45 @@ REMEMBER: NO MARKDOWN - plain text with box characters only!"""
                         if os.path.isdir(new_path):
                             WORKSPACE_DIR = new_path
                             os.chdir(new_path)
-                            console.print(f"[green]Workspace changed to: {WORKSPACE_DIR}[/]")
+                            console.print(f"[{C_SUCCESS}]>> WORKSPACE REDIRECTED: {WORKSPACE_DIR} <<[/{C_SUCCESS}]")
                         else:
-                            console.print(f"[red]Directory not found: {new_path}[/]")
+                            console.print(f"[{C_ERROR}]DIRECTORY NOT FOUND: {new_path}[/{C_ERROR}]")
                     else:
-                        console.print(f"[cyan]Current workspace: {WORKSPACE_DIR}[/]")
-                        console.print("[dim]Usage: /workspace /path/to/dir[/]")
+                        console.print(f"[{C_SECONDARY}]CURRENT WORKSPACE: {WORKSPACE_DIR}[/{C_SECONDARY}]")
+                        console.print(f"[{C_DIM}]Usage: /workspace /path/to/dir[/{C_DIM}]")
                     continue
 
                 elif cmd == "/auto":
                     AUTO_APPROVE = not AUTO_APPROVE
                     if AUTO_APPROVE:
-                        console.print("[yellow]Auto-approve ON - tools will execute without prompts[/]")
+                        console.print(f"[{C_ACCENT}]>> AUTO-APPROVE: ENABLED - All actions will execute without confirmation <<[/{C_ACCENT}]")
                     else:
-                        console.print("[green]Auto-approve OFF - you'll be asked before each action[/]")
+                        console.print(f"[{C_SUCCESS}]>> AUTO-APPROVE: DISABLED - You will be prompted for each action <<[/{C_SUCCESS}]")
                     continue
 
                 elif cmd == "/skyhammer":
                     SKYHAMMER_MODE = not SKYHAMMER_MODE
                     if SKYHAMMER_MODE:
-                        console.print("\n[bold green]╔═══════════════════════════════════════╗[/]")
-                        console.print("[bold green]║      SKYHAMMER MODE ACTIVATED         ║[/]")
-                        console.print("[bold green]╚═══════════════════════════════════════╝[/]\n")
-                        console.print("[dim]Security tools: scan, exploit, patch, shell[/]\n")
+                        # Display the SKYHAMMER warning banner
+                        print_skyhammer_banner()
 
                         # Auto-prompt for target
                         target_type = questionary.select(
-                            "What do you want to test?",
+                            "SELECT TARGET TYPE:",
                             choices=[
                                 "Local file (Python, JS, etc.)",
                                 "Local directory (scan all files)",
                                 "Running web app (URL)",
-                                "Skip - I'll specify later"
+                                "SKIP - I'll specify later"
                             ],
-                            style=questionary.Style([('selected', 'fg:green bold')])
+                            style=eva_style
                         ).ask()
 
-                        if target_type and "Skip" not in target_type:
+                        if target_type and "SKIP" not in target_type:
                             if "URL" in target_type:
                                 target = questionary.text(
-                                    "Enter URL (e.g., http://localhost:5000):",
-                                    style=questionary.Style([('answer', 'fg:cyan')])
+                                    "ENTER TARGET URL:",
+                                    style=eva_style
                                 ).ask()
                                 if target:
                                     # Set initial tasks
@@ -1157,25 +1298,25 @@ Use plain text format with box characters. Show:
 START TESTING NOW."""
                                     messages.append({"role": "user", "content": user_input})
                                     log_conversation("user", user_input)
-                                    console.print(f"\n[yellow]Target: {target}[/]")
-                                    console.print("[dim]Starting security scan...[/]\n")
+                                    console.print(f"\n[{C_PRIMARY}]>> TARGET ACQUIRED: {target} <<[/{C_PRIMARY}]")
+                                    console.print(f"[{C_DIM}]Initiating security scan...[/{C_DIM}]\n")
                                     try:
                                         response = chat_completion(messages, use_tools=True)
                                         console.print()
                                         if "```" in response:
                                             console.print(Markdown(response))
                                         else:
-                                            console.print(Panel(response, border_style="green", title="SkyHammer Report"))
+                                            console.print(Panel(response, border_style="yellow", title=f"[{C_HIGHLIGHT}] SKYHAMMER REPORT [/{C_HIGHLIGHT}]", box=box.DOUBLE))
                                         messages.append({"role": "assistant", "content": response})
                                         log_conversation("assistant", response)
                                         set_task_status("done")
                                     except Exception as e:
-                                        console.print(f"[red]Error: {e}[/]")
+                                        console.print(f"[{C_ERROR}]ERROR: {e}[/{C_ERROR}]")
                                         set_task_status("idle")
                             else:
                                 target = questionary.path(
-                                    "Enter file/directory path:",
-                                    style=questionary.Style([('answer', 'fg:cyan')])
+                                    "ENTER FILE/DIRECTORY PATH:",
+                                    style=eva_style
                                 ).ask()
                                 if target and os.path.exists(target):
                                     # Set initial tasks
@@ -1211,45 +1352,45 @@ THEN PATCH THE ORIGINAL FILE:
 START TESTING NOW."""
                                     messages.append({"role": "user", "content": user_input})
                                     log_conversation("user", user_input)
-                                    console.print(f"\n[yellow]Target: {target}[/]")
-                                    console.print("[dim]Analyzing and testing for vulnerabilities...[/]\n")
+                                    console.print(f"\n[{C_PRIMARY}]>> TARGET ACQUIRED: {target} <<[/{C_PRIMARY}]")
+                                    console.print(f"[{C_DIM}]Analyzing and testing for vulnerabilities...[/{C_DIM}]\n")
                                     try:
                                         response = chat_completion(messages, use_tools=True)
                                         console.print()
                                         if "```" in response:
                                             console.print(Markdown(response))
                                         else:
-                                            console.print(Panel(response, border_style="green", title="SkyHammer Report"))
+                                            console.print(Panel(response, border_style="yellow", title=f"[{C_HIGHLIGHT}] SKYHAMMER REPORT [/{C_HIGHLIGHT}]", box=box.DOUBLE))
                                         messages.append({"role": "assistant", "content": response})
                                         log_conversation("assistant", response)
                                         set_task_status("done")
                                     except Exception as e:
-                                        console.print(f"[red]Error: {e}[/]")
+                                        console.print(f"[{C_ERROR}]ERROR: {e}[/{C_ERROR}]")
                                         set_task_status("idle")
                                 elif target:
-                                    console.print(f"[red]Path not found: {target}[/]")
+                                    console.print(f"[{C_ERROR}]PATH NOT FOUND: {target}[/{C_ERROR}]")
                     else:
-                        console.print("[bold red]SkyHammer Mode DEACTIVATED[/]")
-                        console.print("[dim]Running in standard coding assistant mode[/]")
+                        console.print(f"[{C_DIM}]>> SKYHAMMER PROTOCOL DISENGAGED <<[/{C_DIM}]")
+                        console.print(f"[{C_DIM}]Running in standard coding assistant mode[/{C_DIM}]")
                     continue
 
                 elif cmd == "/apikey":
-                    new_key = questionary.password("Enter your GDM API key:").ask()
+                    new_key = questionary.password("ENTER GDM API KEY:", style=eva_style).ask()
                     if new_key and new_key.startswith("xai-"):
                         GDM_API_KEY = new_key
                         client = OpenAI(api_key=GDM_API_KEY, base_url="https://api.x.ai/v1")
-                        console.print("[green]API key updated successfully![/]")
+                        console.print(f"[{C_SUCCESS}]>> API KEY UPDATED SUCCESSFULLY <<[/{C_SUCCESS}]")
                     else:
-                        console.print("[red]Invalid API key format (should start with 'xai-')[/]")
+                        console.print(f"[{C_ERROR}]INVALID API KEY FORMAT (should start with 'xai-')[/{C_ERROR}]")
                     continue
 
                 elif cmd == "/scan":
-                    target = questionary.text("File or URL to scan:").ask()
+                    target = questionary.text("FILE OR URL TO SCAN:", style=eva_style).ask()
                     if target:
                         user_input = f"Run a security scan on {target} and report any vulnerabilities found."
 
                 elif cmd == "/patch":
-                    target = questionary.text("File to patch:").ask()
+                    target = questionary.text("FILE TO PATCH:", style=eva_style).ask()
                     if target:
                         user_input = f"Analyze {target} for security vulnerabilities and generate a patched version."
 
@@ -1260,16 +1401,17 @@ START TESTING NOW."""
                         model_choices.append(f"{model_id} | {info['price']} | {info['desc']}")
 
                     model_choice = questionary.select(
-                        "Select model:",
-                        choices=model_choices
+                        "SELECT MODEL:",
+                        choices=model_choices,
+                        style=eva_style
                     ).ask()
                     if model_choice:
                         CURRENT_MODEL = model_choice.split(" | ")[0]
-                        console.print(f"[green]Switched to {CURRENT_MODEL}[/]")
+                        console.print(f"[{C_SUCCESS}]>> MODEL SWITCHED TO: {CURRENT_MODEL} <<[/{C_SUCCESS}]")
                     continue
 
                 else:
-                    console.print(f"[red]Unknown command: {cmd}[/]")
+                    console.print(f"[{C_ERROR}]UNKNOWN COMMAND: {cmd}[/{C_ERROR}]")
                     continue
 
             # Add user message
@@ -1278,29 +1420,28 @@ START TESTING NOW."""
 
             # Get response
             console.print()
-            console.print("[dim]Gemini is thinking...[/]")
 
             try:
                 response = chat_completion(messages, use_tools=True)
 
-                # Display response
+                # Display response with NERV-style panel
                 console.print()
                 if "```" in response:
                     # Has code blocks - render as markdown
                     console.print(Markdown(response))
                 else:
-                    console.print(Panel(response, border_style="green", title="Gemini"))
+                    console.print(Panel(response, border_style="cyan", title=f"[{C_SECONDARY}]MISSION REPORT[/{C_SECONDARY}]", box=box.ROUNDED))
 
                 messages.append({"role": "assistant", "content": response})
                 log_conversation("assistant", response)
 
             except Exception as e:
-                console.print(f"[red]Error: {e}[/]")
+                console.print(f"[{C_ERROR}]SYSTEM ERROR: {e}[/{C_ERROR}]")
 
             console.print()
 
         except KeyboardInterrupt:
-            console.print("\n[yellow]Use /exit to quit[/]")
+            console.print(f"\n[{C_ACCENT}]>> Use /exit to terminate session <<[/{C_ACCENT}]")
             continue
 
 
@@ -1332,7 +1473,7 @@ def security_mode():
         print("Rich library required")
         return
 
-    console.print("\n[bold red]Security Scan Mode[/]")
+    console.print(f"\n[{C_ERROR}]:: SECURITY SCAN MODE ACTIVATED ::[/{C_ERROR}]")
 
     target = questionary.text("Enter file or URL to scan:").ask()
     if not target:

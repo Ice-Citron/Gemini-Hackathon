@@ -1,0 +1,11 @@
+{
+  "id": "sqli_raw_execute_049",
+  "type": "sqli",
+  "subtype": "raw_execute",
+  "vulnerable_code": "import sqlite3\n\ndef get_user(search):\n    \"\"\"Get user from database\"\"\"\n    conn = sqlite3.connect(\"main.db\")\n    cursor = conn.cursor()\n    # VULNERABILITY: String interpolation in execute\n    cursor.execute(\"SELECT * FROM admins WHERE name = '%s'\" % search)\n    result = cursor.fetchone()\n    conn.close()\n    return result\n\n# Example usage\nif __name__ == \"__main__\":\n    user_input = input(\"Enter search: \")\n    print(get_user(user_input))\n",
+  "secure_code": "import sqlite3\n\ndef get_user(search):\n    \"\"\"Get user from database\"\"\"\n    conn = sqlite3.connect(\"main.db\")\n    cursor = conn.cursor()\n    # SECURE: Parameterized query\n    cursor.execute(\"SELECT * FROM admins WHERE name = ?\", (search,))\n    result = cursor.fetchone()\n    conn.close()\n    return result\n\n# Example usage\nif __name__ == \"__main__\":\n    user_input = input(\"Enter search: \")\n    print(get_user(user_input))\n",
+  "exploit_command": "echo \"' OR '1'='1\" | python script.py",
+  "param_name": "search",
+  "route": null,
+  "generated_at": "2026-01-17T18:04:33.587203"
+}

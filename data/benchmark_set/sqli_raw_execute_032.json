@@ -1,0 +1,11 @@
+{
+  "id": "sqli_raw_execute_032",
+  "type": "sqli",
+  "subtype": "raw_execute",
+  "vulnerable_code": "import sqlite3\n\ndef get_user(input):\n    \"\"\"Get user from database\"\"\"\n    conn = sqlite3.connect(\"app.db\")\n    cursor = conn.cursor()\n    # VULNERABILITY: String interpolation in execute\n    cursor.execute(\"SELECT * FROM profiles WHERE email = '%s'\" % input)\n    result = cursor.fetchone()\n    conn.close()\n    return result\n\n# Example usage\nif __name__ == \"__main__\":\n    user_input = input(\"Enter input: \")\n    print(get_user(user_input))\n",
+  "secure_code": "import sqlite3\n\ndef get_user(input):\n    \"\"\"Get user from database\"\"\"\n    conn = sqlite3.connect(\"app.db\")\n    cursor = conn.cursor()\n    # SECURE: Parameterized query\n    cursor.execute(\"SELECT * FROM profiles WHERE email = ?\", (input,))\n    result = cursor.fetchone()\n    conn.close()\n    return result\n\n# Example usage\nif __name__ == \"__main__\":\n    user_input = input(\"Enter input: \")\n    print(get_user(user_input))\n",
+  "exploit_command": "echo \"' OR '1'='1\" | python script.py",
+  "param_name": "input",
+  "route": null,
+  "generated_at": "2026-01-17T18:04:33.585819"
+}

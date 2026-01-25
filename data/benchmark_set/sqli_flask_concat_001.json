@@ -1,0 +1,11 @@
+{
+  "id": "sqli_flask_concat_001",
+  "type": "sqli",
+  "subtype": "flask_concat",
+  "vulnerable_code": "import sqlite3\nfrom flask import Flask, request, jsonify\n\napp = Flask(__name__)\n\n@app.route('/query', methods=['POST'])\ndef authenticate():\n    query = request.form.get('query')\n    password = request.form.get('password')\n    # VULNERABILITY: String concatenation in SQL\n    query = \"SELECT * FROM accounts WHERE name = '\" + query + \"' AND password = '\" + password + \"'\"\n    conn = sqlite3.connect('app.db')\n    cursor = conn.cursor()\n    cursor.execute(query)  # <--- SQL INJECTION HERE\n    user = cursor.fetchone()\n    conn.close()\n    if user:\n        return jsonify({\"status\": \"authenticated\"})\n    return jsonify({\"status\": \"failed\"}), 401\n\nif __name__ == '__main__':\n    app.run(debug=True, port=5000)\n",
+  "secure_code": "import sqlite3\nfrom flask import Flask, request, jsonify\n\napp = Flask(__name__)\n\n@app.route('/query', methods=['POST'])\ndef authenticate():\n    query = request.form.get('query')\n    password = request.form.get('password')\n    # SECURE: Parameterized query\n    query = \"SELECT * FROM accounts WHERE name = ? AND password = ?\"\n    conn = sqlite3.connect('app.db')\n    cursor = conn.cursor()\n    cursor.execute(query, (query, password))  # <--- PARAMETERIZED\n    user = cursor.fetchone()\n    conn.close()\n    if user:\n        return jsonify({\"status\": \"authenticated\"})\n    return jsonify({\"status\": \"failed\"}), 401\n\nif __name__ == '__main__':\n    app.run(debug=True, port=5000)\n",
+  "exploit_command": "curl -X POST '/query' -d 'query=admin' OR '1'='1'--&password=x'",
+  "param_name": "query",
+  "route": "/query",
+  "generated_at": "2026-01-17T18:04:33.582627"
+}

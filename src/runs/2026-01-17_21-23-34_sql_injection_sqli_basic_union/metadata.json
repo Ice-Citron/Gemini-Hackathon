@@ -1,0 +1,10 @@
+{
+  "run_name": "sql_injection_sqli_basic_union",
+  "challenge_id": "sqli_basic_union",
+  "start_time": "2026-01-17T21:23:34.650482",
+  "end_time": "2026-01-17T21:24:32.950280",
+  "duration_seconds": 58.299798,
+  "total_api_calls": 4,
+  "total_tool_calls": 15,
+  "run_dir": "/Users/administrator/Imperial-College-London/Projects/2025/2026-01 January/GDM Geminiathon/src/runs/2026-01-17_21-23-34_sql_injection_sqli_basic_union"
+}

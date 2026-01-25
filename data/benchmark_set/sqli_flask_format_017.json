@@ -1,0 +1,11 @@
+{
+  "id": "sqli_flask_format_017",
+  "type": "sqli",
+  "subtype": "flask_format",
+  "vulnerable_code": "import sqlite3\nfrom flask import Flask, request, jsonify\n\napp = Flask(__name__)\n\n@app.route('/api/user')\ndef get_user():\n    search = request.args.get('search', '')\n    # VULNERABILITY: String format in SQL query\n    query = \"SELECT * FROM members WHERE id = '{}'\".format(search)\n    conn = sqlite3.connect('db.sqlite')\n    cursor = conn.cursor()\n    cursor.execute(query)  # <--- SQL INJECTION HERE\n    results = cursor.fetchall()\n    conn.close()\n    return jsonify(results)\n\nif __name__ == '__main__':\n    app.run(debug=True, port=5000)\n",
+  "secure_code": "import sqlite3\nfrom flask import Flask, request, jsonify\n\napp = Flask(__name__)\n\n@app.route('/api/user')\ndef get_user():\n    search = request.args.get('search', '')\n    # SECURE: Parameterized query\n    query = \"SELECT * FROM members WHERE id = ?\"\n    conn = sqlite3.connect('db.sqlite')\n    cursor = conn.cursor()\n    cursor.execute(query, (search,))  # <--- PARAMETERIZED\n    results = cursor.fetchall()\n    conn.close()\n    return jsonify(results)\n\nif __name__ == '__main__':\n    app.run(debug=True, port=5000)\n",
+  "exploit_command": "curl '/api/user?search=admin'--",
+  "param_name": "search",
+  "route": "/api/user",
+  "generated_at": "2026-01-17T18:04:33.584205"
+}
