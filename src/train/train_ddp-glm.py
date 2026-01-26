@@ -5,7 +5,7 @@ from trl import SFTTrainer, SFTConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # USE THE OFFICIAL NVIDIA/MISTRAL REPO (NOT MLX!)
-MODEL_NAME = "mistralai/Mistral-Large-Instruct-2407" 
+MODEL_NAME = "mistralai/Devstral-2-123B-Instruct-2512"
 OUTPUT_DIR = "checkpoints/skyhammer_devstral_123b"
 
 def main():
