@@ -1,4 +1,4 @@
-torch
+torch==2.4.0
 transformers
 datasets
 huggingface_hub
@@ -10,9 +10,12 @@ accelerate
 bitsandbytes
 torchvision
 
+numpy==1.26
+
+
 google-genai
 google-cloud-aiplatform
-
+deepspeed
 
 
 
