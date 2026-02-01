@@ -30,6 +30,11 @@ DATASET_HF = "shng2025/SkyHammer-Gemini-Dataset"
 OUTPUT_DIR = "checkpoints/skyhammer_fsdp"
 MAX_LENGTH = 4096
 
+# --- LOGGING & HUB ---
+WANDB_PROJECT = "SkyHammer-Gemini-Hack"
+WANDB_ENTITY = "Imperial-College-London-SPQR"
+HF_MODEL_ID = "shng2025/SkyHammer-123B-devstral2-v1"
+
 
 def format_example(example):
     prompt = f"VULNERABILITY: {example['vulnerability_type']}\nCODE:\n{example['vulnerable_code']}\nFIX THIS."
@@ -46,6 +51,8 @@ def main():
     if rank == 0:
         print(f"--- Initializing FSDP Training for {MODEL_NAME} ---")
         print(f"--- World size: {world_size} GPUs ---")
+        print(f"--- W&B: {WANDB_ENTITY}/{WANDB_PROJECT} ---")
+        print(f"--- HF Hub: {HF_MODEL_ID} ---")
 
     # 2. Pre-download on rank 0 only
     if rank == 0:
@@ -64,9 +71,6 @@ def main():
     config.torch_dtype = torch.bfloat16
 
     # 4. LOAD MODEL - RANK 0 ONLY
-    # This is the critical fix: only rank 0 loads the full model
-    # FSDP will broadcast shards to other ranks
-
     if rank == 0:
         print("[Rank 0] Loading full model into CPU RAM...")
         model = AutoModelForCausalLM.from_pretrained(
@@ -75,11 +79,10 @@ def main():
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
-            device_map="cpu",  # Load to CPU, FSDP will shard to GPUs
+            device_map="cpu",
         )
         print("[Rank 0] Model loaded successfully!")
     else:
-        # Other ranks: create empty model structure (no weights loaded)
         print(f"[Rank {rank}] Creating empty model skeleton...")
         from accelerate import init_empty_weights
         with init_empty_weights():
@@ -91,20 +94,17 @@ def main():
 
     model.config.use_cache = False
 
-    # 5. Sync model state from rank 0 to all other ranks
-    # FSDP will handle this when we pass sync_module_states=True
     accelerator.wait_for_everyone()
 
     if rank == 0:
         print("--- Model ready for FSDP sharding ---")
 
-    # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
 
     gc.collect()
     torch.cuda.empty_cache()
 
-    # 6. Tokenizer
+    # 5. Tokenizer
     try:
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True, use_fast=True)
     except:
@@ -115,7 +115,32 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # 7. Dataset
+
+    # --- SAFETY CHECK: VOCABULARY MISMATCH ---
+    vocab_size_model = model.config.vocab_size
+    vocab_size_tokenizer = len(tokenizer)
+    
+    if rank == 0:
+        print(f"--- VOCAB CHECK ---")
+        print(f"Model Vocab: {vocab_size_model}")
+        print(f"Tokenizer Vocab: {vocab_size_tokenizer}")
+    
+    if vocab_size_tokenizer > vocab_size_model:
+        if rank == 0:
+            print("!!! CRITICAL WARNING: Tokenizer is larger than Model !!!")
+            print("Resizing model embeddings to avoid NaN crash...")
+        
+        # This expands the model's input layer to handle the extra tokens
+        # (FSDP will handle the synchronization of this)
+        model.resize_token_embeddings(vocab_size_tokenizer)
+        
+        # We must ensure the new embeddings require gradients so LoRA works
+        model.get_input_embeddings().requires_grad_(True)
+    # -----------------------------------------
+
+
+
+    # 6. Dataset
     dataset = load_dataset(DATASET_HF, split="train")
     with accelerator.main_process_first():
         dataset = dataset.map(format_example, remove_columns=dataset.column_names)
@@ -123,45 +148,64 @@ def main():
     if rank == 0:
         print(f"--- Dataset: {len(dataset)} examples ---")
 
-    # 8. LoRA Config
+    # 7. LoRA Config
     peft_config = LoraConfig(
         r=16,
-        lora_alpha=32,
+        lora_alpha=8,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
     )
 
-    # 9. Training Args
+    # 8. Training Args
     training_args = SFTConfig(
         output_dir=OUTPUT_DIR,
         dataset_text_field="text",
         max_length=MAX_LENGTH,
         packing=False,
 
-        per_device_train_batch_size=1, # changed from 1 to 2 for greater A100 utilisation
-        gradient_accumulation_steps=1,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=8,
 
-        # STABILITY: Lower LR + gradient clipping to prevent explosion
-        learning_rate=2e-6,        # Drastically lowered (was 1e-5)
-        warmup_ratio=0.1,          # 10% warmup to gently wake up the weights
-        max_grad_norm=0.3,         # Clamp gradients hard (default is 1.0)
-        weight_decay=0.01,         # Standard stability regularization
-        num_train_epochs=1,
+        # STABILITY
+        learning_rate=5e-7,
+        warmup_ratio=0.1,
+        max_grad_norm=0.3,
+        weight_decay=0.01,
 
-        num_train_epochs=1,
+        num_train_epochs=10,
         bf16=True,
 
+        # FRONTIER LAB TRICKS
+        adam_beta2=0.95,                # "Forget" the explosion faster
+        adam_epsilon=1e-8,              # Standard stability
+
+        # LOGGING - W&B
         logging_steps=1,
+        report_to="wandb",
+        run_name="skyhammer-123b-sft-v1",
+
+        # CHECKPOINTING
         save_strategy="steps",
         save_steps=50,
+
+        # HUGGINGFACE HUB
+        push_to_hub=True,
+        hub_model_id=HF_MODEL_ID,
+        hub_strategy="checkpoint",  # Push at each checkpoint
 
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
 
         ddp_timeout=7200,
     )
+
+    # 9. Set W&B environment (rank 0 only logs)
+    if rank == 0:
+        os.environ["WANDB_PROJECT"] = WANDB_PROJECT
+        os.environ["WANDB_ENTITY"] = WANDB_ENTITY
+        os.environ["WANDB_WATCH"] = "false"  # Optional: Prevents logging gradients (saves RAM)
 
     # 10. Trainer
     trainer = SFTTrainer(
@@ -177,9 +221,16 @@ def main():
 
     trainer.train()
 
+    # 11. Save & Push
     if rank == 0:
+        print(f"--- Saving to {OUTPUT_DIR} ---")
         trainer.save_model(OUTPUT_DIR)
-        print(f"--- Saved to {OUTPUT_DIR} ---")
+        tokenizer.save_pretrained(OUTPUT_DIR)
+
+        # Final push to hub
+        print(f"--- Pushing to HuggingFace: {HF_MODEL_ID} ---")
+        trainer.push_to_hub(commit_message="Final SFT checkpoint")
+        print("--- Done! ---")
 
 
 if __name__ == "__main__":
