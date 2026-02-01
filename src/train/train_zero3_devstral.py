@@ -12,11 +12,10 @@ from transformers import (
 )
 from huggingface_hub import snapshot_download
 from peft import LoraConfig
+from accelerate import Accelerator  # <--- WE IMPORT THIS NOW
 
 # --- CONFIGURATION ---
-# MODEL_NAME = "mistralai/Mistral-Small-24B-Instruct-2501"
-MODEL_NAME = "mistralai/Devstral-2-123B-Instruct-2512"
-
+MODEL_NAME = "mistralai/Devstral-2-123B-Instruct-2512" 
 DATASET_HF = "shng2025/SkyHammer-Gemini-Dataset"
 OUTPUT_DIR = "checkpoints/skyhammer_fsdp"
 MAX_LENGTH = 4096
@@ -27,45 +26,52 @@ def format_example(example):
     return {"text": f"[INST] {prompt} [/INST] {response}"}
 
 def main():
-    rank = int(os.environ.get("LOCAL_RANK", "0"))
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-
+    # 1. Initialize Accelerator MANUALLY to control memory loading
+    accelerator = Accelerator()
+    rank = accelerator.process_index  # Use accelerator's rank detection
+    
     if rank == 0:
-        print(f"--- [GPU {rank}] Initializing FSDP Training (Size-Based Wrapping) ---")
+        print(f"--- [GPU {rank}] Initializing FSDP Training (Memory Optimized) ---")
 
-    if world_size > 1 and not dist.is_initialized():
-        dist.init_process_group(backend="nccl")
-
-    # 1. PRE-DOWNLOAD
+    # 2. Pre-download (Rank 0 only)
     if rank == 0:
         try:
             snapshot_download(repo_id=MODEL_NAME, ignore_patterns=["*.gguf", "*.ggml", "*.bin"])
         except:
             pass
-    if world_size > 1:
-        dist.barrier()
+    accelerator.wait_for_everyone() # Replaces dist.barrier()
 
-    # 2. LOAD CONFIG
+    # 3. Load Config
     config = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
     if hasattr(config, "quantization_config"):
         delattr(config, "quantization_config")
     config.torch_dtype = torch.bfloat16
-
-    # 3. LOAD BASE MODEL (No PEFT wrapping here!)
-    print(f"--- [GPU {rank}] Loading base model ---")
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        config=config,
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-        low_cpu_mem_usage=True,
-    )
     
-    # Critical settings for FSDP
+    # 4. LOAD MODEL (The Critical Fix)
+    # We let SFTTrainer handle the loading internally, but we set the config right.
+    # We do NOT manually load model = AutoModel... here anymore if we want FSDP to work perfectly with low_mem.
+    # However, to be 100% sure we don't OOM, we pass the model_id string to SFTTrainer
+    # and let it use the accelerator to lazy-load.
+    
+    # BUT, since we need specific configs (no cache, etc), we load with the empty_init context.
+    print(f"--- [GPU {rank}] Loading Model Skeleton... ---")
+    
+    # This context manager forces the model to load as "Empty" (Meta Device) first
+    # Then FSDP materializes only the shard this GPU needs.
+    with accelerator.main_process_first():
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            config=config,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True, 
+            # device_map="cpu" # We DON'T use this, we rely on low_cpu_mem_usage + FSDP
+        )
+
     model.config.use_cache = False 
     model.gradient_checkpointing_enable() 
 
-    # 4. TOKENIZER
+    # 5. Tokenizer
     try:
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True, use_fast=True)
     except:
@@ -74,11 +80,12 @@ def main():
         tokenizer = PreTrainedTokenizerFast(tokenizer_file=f)
     if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
 
-    # 5. DATASET
+    # 6. Dataset
     dataset = load_dataset(DATASET_HF, split="train")
-    dataset = dataset.map(format_example, remove_columns=dataset.column_names)
+    with accelerator.main_process_first():
+        dataset = dataset.map(format_example, remove_columns=dataset.column_names)
 
-    # 6. LORA CONFIG (Passed to Trainer, NOT model)
+    # 7. LoRA Config
     peft_config = LoraConfig(
         r=16,
         lora_alpha=32,
@@ -88,7 +95,7 @@ def main():
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
     )
 
-    # 7. TRAINING ARGS
+    # 8. Training Args
     training_args = SFTConfig(
         output_dir=OUTPUT_DIR,
         dataset_text_field="text",
@@ -96,7 +103,7 @@ def main():
         packing=False,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
-        learning_rate=2e-5,
+        learning_rate=1e-5,
         num_train_epochs=1,
         bf16=True,
         logging_steps=1,
@@ -107,14 +114,13 @@ def main():
         ddp_timeout=7200,
     )
 
-    # 8. TRAINER (The Fix)
-    # SFTTrainer will wrap the model with LoRA *inside* the FSDP context safely.
+    # 9. Trainer
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset,
         processing_class=tokenizer,
         args=training_args,
-        peft_config=peft_config, # <--- THIS PREVENTS THE DEADLOCK
+        peft_config=peft_config,
     )
 
     print(f"--- [GPU {rank}] Starting Training ---")
